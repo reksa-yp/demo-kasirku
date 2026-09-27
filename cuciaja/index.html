@@ -7,11 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <meta name="color-scheme" content="light dark">
-<title>CuciAja</title>
+<title>CuciAja Demo</title>
 <meta name="theme-color" content="#0b2540">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="assets/icon-192.png">
 <style>
 /* ===== CuciAja - tampilan ===== */
 :root {
@@ -773,6 +770,1145 @@ button,a,label,input,select,textarea{ touch-action:manipulation; }
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <div id="printRoot"></div>
 
+<script>
+window.CUCIAJA_DEMO = (function () {
+/**
+ * CuciAja - core.js (versi JavaScript untuk demo; server asli memakai app/Core.php)
+ * Logika bisnis (login, kasir, produk, pelanggan, user, laporan).
+ * File ini TIDAK memanggil layanan Google secara langsung; semua akses data dan
+ * kripto lewat objek "platform" (lihat Code.gs). Karena itu file yang sama juga
+ * dipakai oleh demo di browser.
+ */
+
+var APP_VERSION = '1.0.0';
+var TZ_HOURS = 7;            // WIB (UTC+7)
+var SESSION_HOURS = 12;      // masa berlaku login
+var METHODS = ['cash', 'transfer', 'debit', 'credit', 'qris'];
+var ROLES = ['admin', 'kasir']; // admin = "Kasir Admin", kasir = "Kasir" biasa
+
+// Skema tabel. Tipe kolom: n = angka, s = teks, b = ya/tidak (disimpan 1/0)
+var SCHEMA = {
+  Users: [['id','n'],['username','s'],['salt','s'],['pass_hash','s'],['full_name','s'],['role','s'],['active','b'],['last_login','s'],['created_at','s']],
+  Categories: [['id','n'],['name','s']],
+  Products: [['id','n'],['type','s'],['category','s'],['sku','s'],['barcode','s'],['name','s'],['unit','s'],['cost_price','n'],['price','n'],['stock','n'],['min_stock','n'],['track_stock','b'],['created_at','s']],
+  Customers: [['id','n'],['name','s'],['phone','s'],['email','s'],['address','s'],['created_at','s']],
+  Transactions: [['id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_addr','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['discount_amount','n'],['tax_rate','n'],['tax_amount','n'],['grand_total','n'],['method','s'],['amount_paid','n'],['change','n'],['status','s'],['note','s'],['client_ref','s'],['source','s']],
+  TxItems: [['id','n'],['tx_id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['product_id','n'],['name','s'],['type','s'],['qty','n'],['price','n'],['cost','n'],['subtotal','n']],
+  StockLog: [['id','n'],['date','s'],['product_id','n'],['name','s'],['user_name','s'],['type','s'],['change','n'],['before','n'],['after','n'],['note','s']],
+  Settings: [['key','s'],['value','s']],
+  LaundryServices: [['id','n'],['name','s'],['unit','s'],['price','n'],['duration_hours','n'],['active','b'],['sort','n'],['created_at','s']],
+  Orders: [['id','n'],['order_no','s'],['date_in','s'],['due_at','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_phone','s'],['subtotal','n'],['discount','n'],['total','n'],['paid','n'],['kg','n'],['summary','s'],['status','s'],['picked_at','s'],['parfum','s'],['note','s']],
+  OrderItems: [['id','n'],['order_id','n'],['service_id','n'],['name','s'],['unit','s'],['qty','n'],['price','n'],['subtotal','n']],
+  OrderPayments: [['id','n'],['order_id','n'],['order_no','s'],['date','s'],['amount','n'],['method','s'],['kind','s'],['user_id','n'],['user_name','s']],
+  OrderLog: [['id','n'],['order_id','n'],['date','s'],['status','s'],['user_name','s'],['note','s']]
+};
+
+var SETTING_DEFAULTS = {
+  store_name: 'CuciAja', store_address: '', store_phone: '', store_email: '', tax_no: '',
+  bank_name: '', bank_account: '', bank_holder: '',
+  tax_rate: '0', paper_width: '80', receipt_footer: 'Terima kasih telah mempercayakan cucian Anda.',
+  show_logo_on_receipt: '1', auto_print: '0', inv_code: '200', inv_year: '', inv_next: '1',
+  theme_brand: '', theme_accent: '', theme_pay: '', theme_bar: '',
+  order_prefix: 'CA', parfum_list: 'Lavender, Sakura, Downy, Tanpa pewangi',
+  wa_tpl_terima: 'Halo {nama}, cucian Anda sudah kami terima.\nNo. order: {no}\nLayanan: {layanan}\nTotal: {total} ({bayar})\nEstimasi selesai: {estimasi}\n\nTerima kasih - {toko}',
+  wa_tpl_siap: 'Halo {nama}, cucian Anda dengan No. {no} sudah SELESAI dan siap diambil.\n{bayar}\n\nTerima kasih - {toko}'
+};
+
+/* ---------------- util tanggal & angka ---------------- */
+function pad_(n, w) { var s = String(n); while (s.length < w) { s = '0' + s; } return s; }
+function wib_(d) {
+  var t = new Date(d.getTime() + TZ_HOURS * 3600000);
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate(), h: t.getUTCHours(), i: t.getUTCMinutes(), s: t.getUTCSeconds() };
+}
+function ymd_(p) { return p.y + '-' + pad_(p.m, 2) + '-' + pad_(p.d, 2); }
+function fmtDate_(d) { return ymd_(wib_(d)); }
+function fmtDateTime_(d) { var p = wib_(d); return ymd_(p) + ' ' + pad_(p.h, 2) + ':' + pad_(p.i, 2) + ':' + pad_(p.s, 2); }
+function isYmd_(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function addDays_(s, n) {
+  var a = s.split('-');
+  var t = new Date(Date.UTC(+a[0], +a[1] - 1, +a[2] + n));
+  return t.getUTCFullYear() + '-' + pad_(t.getUTCMonth() + 1, 2) + '-' + pad_(t.getUTCDate(), 2);
+}
+function diffDays_(a, b) { // b - a (hari)
+  var x = a.split('-'), y = b.split('-');
+  return Math.round((Date.UTC(+y[0], +y[1] - 1, +y[2]) - Date.UTC(+x[0], +x[1] - 1, +x[2])) / 86400000);
+}
+function round0_(v) { return Math.round(v); }
+function round2_(v) { return Math.round(v * 100) / 100; }
+
+/* ================================================================ */
+function createBackend_(P) {
+  var db = P.db;
+
+  function fail(msg, code) { var e = new Error(msg); e.isApp = true; e.code = code || 'ERR'; throw e; }
+
+  /* ---------- validasi ---------- */
+  function str(v, max, label, required) {
+    var s = (v === null || v === undefined) ? '' : String(v).replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f]/g, ' ').trim();
+    if (required && !s) { fail(label + ' wajib diisi.'); }
+    if (s.length > max) { fail(label + ' terlalu panjang (maksimal ' + max + ' karakter).'); }
+    return s;
+  }
+  function num(v, label, min, max) {
+    var n = Number(v);
+    if (v === '' || v === null || v === undefined || !isFinite(n)) { fail(label + ' harus berupa angka.'); }
+    if (n < min) { fail(label + ' tidak boleh kurang dari ' + min + '.'); }
+    if (n > max) { fail(label + ' terlalu besar.'); }
+    return n;
+  }
+  function int(v, label, min, max) {
+    var n = num(v, label, min, max);
+    if (Math.floor(n) !== n) { fail(label + ' harus bilangan bulat.'); }
+    return n;
+  }
+  function idList(v) {
+    if (!Array.isArray(v) || !v.length) { fail('Tidak ada data yang dipilih.'); }
+    if (v.length > 1000) { fail('Terlalu banyak data dipilih sekaligus (maksimal 1000).'); }
+    return v.map(function (x) { return refId(x, 'ID'); });
+  }
+  // ID rujukan ke baris lain (mis. product_id, customer_id, atau id baris yang diedit/dihapus).
+  // Server SELALU memberi id positif, tapi mesin offline (PWA) sementara memberi id NEGATIF
+  // untuk baris yang baru dibuat di perangkat & belum tersinkron -- supaya kasir/produk/dst
+  // tetap bisa dipakai (dan saling berelasi) sepenuhnya offline sebelum ada koneksi internet.
+  // Karena itu rentang di sini sengaja mencakup negatif; server sendiri tidak pernah menerima
+  // id negatif sungguhan karena mesin offline menuliskan ulang semua id sementara ini menjadi
+  // id asli dari server sesaat setelah tersinkron (lihat rewriteRefs_ di engine.js).
+  function refId(v, label) {
+    var n = int(v, label, -1e12, 1e12);
+    if (n === 0) { fail(label + ' tidak valid.'); }
+    return n;
+  }
+
+  /* ---------- kripto ---------- */
+  function hashPw(salt, pw) {
+    var h = pw;
+    for (var i = 0; i < 100; i++) { h = P.sha256(salt + ':' + h + ':' + pw); }
+    return h;
+  }
+  function newSalt() { return P.sha256(P.secret() + ':' + Math.random() + ':' + new Date().getTime()).slice(0, 24); }
+  function sign(msg) { var s = P.secret(); return P.sha256(s + ':' + P.sha256(s + ':' + msg)).slice(0, 40); }
+  function makeToken(u) {
+    var exp = Math.floor(P.now().getTime() / 1000) + SESSION_HOURS * 3600;
+    var body = u.id + '.' + exp + '.' + u.pass_hash.slice(0, 8);
+    return body + '.' + sign(body);
+  }
+  function authUser(token, roles) {
+    var t = String(token || '').split('.');
+    if (t.length !== 4) { fail('Sesi berakhir. Silakan masuk kembali.', 'AUTH'); }
+    var body = t[0] + '.' + t[1] + '.' + t[2];
+    if (sign(body) !== t[3]) { fail('Sesi tidak valid. Silakan masuk kembali.', 'AUTH'); }
+    if (Number(t[1]) < Math.floor(P.now().getTime() / 1000)) { fail('Sesi berakhir. Silakan masuk kembali.', 'AUTH'); }
+    var u = db.all('Users').filter(function (x) { return x.id === Number(t[0]); })[0];
+    if (!u || !u.active || u.pass_hash.slice(0, 8) !== t[2]) { fail('Sesi tidak valid. Silakan masuk kembali.', 'AUTH'); }
+    if (roles && roles.indexOf(u.role) < 0) { fail('Anda tidak memiliki hak akses untuk fitur ini.', 'FORBIDDEN'); }
+    return u;
+  }
+
+  /* ---------- pengaturan ---------- */
+  function currentYY() { return pad_(wib_(P.now()).y % 100, 2); }
+  function loadSettings() {
+    var kv = db.kv(), s = {}, k;
+    for (k in SETTING_DEFAULTS) { s[k] = Object.prototype.hasOwnProperty.call(kv, k) ? kv[k] : SETTING_DEFAULTS[k]; }
+    var parts = [], i = 0;
+    while (kv['store_logo_' + i] !== undefined && kv['store_logo_' + i] !== '') { parts.push(kv['store_logo_' + i]); i++; }
+    var yy = currentYY();
+    var qrisReady = kv['qris_image_0'] !== undefined && kv['qris_image_0'] !== '';
+    var next = (kv.inv_year === yy) ? (Number(kv.inv_next) || 1) : 1;
+    return {
+      store_name: s.store_name, store_address: s.store_address, store_phone: s.store_phone, store_email: s.store_email,
+      tax_no: s.tax_no, bank_name: s.bank_name, bank_account: s.bank_account, bank_holder: s.bank_holder,
+      tax_rate: Number(s.tax_rate) || 0, paper_width: Number(s.paper_width) === 58 ? 58 : 80,
+      receipt_footer: s.receipt_footer, show_logo_on_receipt: s.show_logo_on_receipt === '1',
+      auto_print: s.auto_print === '1', inv_code: s.inv_code || '200', inv_next: next, inv_yy: yy,
+      inv_preview: yy + '-' + (s.inv_code || '200') + '-' + pad_(next, 6),
+      store_logo: parts.join(''), qris_ready: qrisReady,
+      theme: { brand: s.theme_brand, accent: s.theme_accent, pay: s.theme_pay, bar: s.theme_bar },
+      order_prefix: s.order_prefix || 'CA', parfum_list: s.parfum_list, wa_tpl_terima: s.wa_tpl_terima, wa_tpl_siap: s.wa_tpl_siap
+    };
+  }
+  function invoiceEligible(t) {
+    return t.customer_id > 0 && (t.method === 'cash' || t.method === 'transfer') && t.status === 'completed';
+  }
+
+  /* ---------- bentuk data keluar ---------- */
+  function pubUser(u) { return { id: u.id, username: u.username, full_name: u.full_name, role: u.role }; }
+  function pubProduct(p, withCost) {
+    var o = { id: p.id, type: p.type, category: p.category, sku: p.sku, barcode: p.barcode, name: p.name, unit: p.unit,
+              price: p.price, stock: p.stock, min_stock: p.min_stock, track_stock: p.track_stock };
+    if (withCost) { o.cost_price = p.cost_price; }
+    return o;
+  }
+  function pubCustomer(c) { return { id: c.id, name: c.name, phone: c.phone, email: c.email, address: c.address }; }
+  function txPayload(t, items) {
+    return {
+      id: t.id, invoice_no: t.invoice_no, date: t.date, user_id: t.user_id, cashier: t.user_name,
+      customer_id: t.customer_id, customer: t.customer_name, customer_addr: t.customer_addr,
+      items: items.map(function (i) { return { product_id: i.product_id, name: i.name, type: i.type, qty: i.qty, price: i.price, subtotal: i.subtotal }; }),
+      subtotal: t.subtotal, discount_type: t.discount_type, discount_value: t.discount_value, discount_amount: t.discount_amount,
+      tax_rate: t.tax_rate, tax_amount: t.tax_amount, grand_total: t.grand_total, method: t.method,
+      amount_paid: t.amount_paid, change: t.change, status: t.status, note: t.note, invoice_eligible: invoiceEligible(t), offline: t.source === 'offline'
+    };
+  }
+  function txSummary(t) {
+    return { id: t.id, invoice_no: t.invoice_no, date: t.date, user_id: t.user_id, cashier: t.user_name, customer: t.customer_name,
+             method: t.method, grand_total: t.grand_total, status: t.status, invoice_eligible: invoiceEligible(t), offline: t.source === 'offline' };
+  }
+
+  /* ---------- hitung total (dipakai checkout & data contoh) ---------- */
+  function computeTotals(subtotal, discType, discValue, taxRate) {
+    var disc = 0;
+    if (discType === 'percent') { disc = round0_(subtotal * discValue / 100); }
+    else if (discType === 'amount') { disc = round0_(discValue); }
+    disc = Math.min(disc, subtotal);
+    var taxable = subtotal - disc;
+    var tax = round0_(taxable * taxRate / 100);
+    return { discount: disc, tax: tax, grand: taxable + tax };
+  }
+  function invoiceNo(yy, code, seq) { return yy + '-' + code + '-' + pad_(seq, 6); }
+
+  /* ================================================================
+     AKSI
+     ================================================================ */
+  var A = {};
+
+  /* ----- publik ----- */
+  A.publicInfo = { auth: false, run: function () {
+    var s = loadSettings();
+    return { store_name: s.store_name, store_logo: s.store_logo, theme: s.theme, version: APP_VERSION };
+  } };
+
+  A.login = { auth: false, write: true, run: function (p) {
+    var uname = str(p.username, 50, 'Username', true).toLowerCase();
+    var pw = String(p.password || '');
+    var key = 'fail:' + uname;
+    var fails = Number(P.cacheGet(key) || 0);
+    if (fails >= 5) { fail('Terlalu banyak percobaan gagal. Coba lagi dalam 10 menit.', 'LOCK'); }
+    var u = db.all('Users').filter(function (x) { return x.username.toLowerCase() === uname; })[0];
+    if (!u || !u.active || hashPw(u.salt, pw) !== u.pass_hash) {
+      P.cachePut(key, String(fails + 1), 600);
+      fail('Username atau password salah.', 'LOGIN');
+    }
+    P.cachePut(key, '0', 1);
+    db.update('Users', u.id, { last_login: fmtDateTime_(P.now()) });
+    return { token: makeToken(u), user: pubUser(u), default_password: u.username === 'admin' && hashPw(u.salt, 'admin123') === u.pass_hash };
+  } };
+
+  /* ----- semua user yang login ----- */
+  A.bootstrap = { roles: ['admin', 'kasir'], run: function (p, user) {
+    return {
+      user: pubUser(user),
+      settings: loadSettings(),
+      products: db.all('Products').map(function (p) { return pubProduct(p, false); }),
+      categories: db.all('Categories').map(function (c) { return c.name; }),
+      customers: db.all('Customers').map(pubCustomer),
+      layanan: layananSorted(true),
+      server_time: fmtDateTime_(P.now())
+    };
+  } };
+
+  A.ping = { roles: ['admin', 'kasir'], run: function (p, user) { return { time: fmtDateTime_(P.now()), user_id: user.id }; } };
+
+  A.checkout = { roles: ['admin', 'kasir'], write: true, run: function (p, user) {
+    // ref = kode unik dari perangkat kasir -> kirim ulang tetap tercatat sekali.
+    var o = (p.offline && typeof p.offline === 'object') ? p.offline : null;
+    var ref = str(p.ref || (o ? o.ref : ''), 64, 'Ref transaksi', false);
+    if (ref) {
+      if (!/^[A-Za-z0-9_-]{8,64}$/.test(ref)) { fail('Ref transaksi tidak valid.'); }
+      var dup = db.all('Transactions').filter(function (t) { return t.client_ref === ref; })[0];
+      if (dup) { var dr = txPayload(dup, db.all('TxItems').filter(function (i) { return i.tx_id === dup.id; })); dr.duplicate = true; return dr; }
+    }
+    var off = null;
+    if (o) {
+      if (!ref) { fail('Transaksi offline wajib memiliki ref.'); }
+      var odate = String(o.date || '');
+      if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(odate)) { fail('Tanggal transaksi offline tidak valid.'); }
+      var sid = refId(o.user_id, 'Kasir');
+      if (sid !== user.id && user.role !== 'admin') { fail('Transaksi offline milik kasir lain hanya bisa disinkronkan oleh Kasir Admin.', 'FORBIDDEN'); }
+      var seller = sid === user.id ? user : db.all('Users').filter(function (x) { return x.id === sid; })[0];
+      if (!seller) { seller = { id: sid, full_name: String(o.user_name || ('User #' + sid)) }; }
+      off = { date: odate, seller: seller, tax_rate: num(o.tax_rate || 0, 'Pajak', 0, 100) };
+    }
+    var raw = p.items;
+    if (!Array.isArray(raw) || !raw.length) { fail('Keranjang masih kosong.'); }
+    if (raw.length > 200) { fail('Terlalu banyak item dalam satu transaksi (maksimal 200).'); }
+    var qtyById = {}, order = [], meta = {};
+    raw.forEach(function (it) {
+      var pid = refId(it && it.product_id, 'Produk');
+      var q = int(it && it.qty, 'Jumlah', 1, 999999);
+      if (!qtyById[pid]) { qtyById[pid] = 0; order.push(pid); if (off) { meta[pid] = { price: num(it.price, 'Harga', 0, 1e12), name: str(it.name, 150, 'Nama', false) }; } }
+      qtyById[pid] += q;
+    });
+
+    var customer = null;
+    if (p.customer_id) {
+      var cid = refId(p.customer_id, 'Pelanggan');
+      customer = db.all('Customers').filter(function (c) { return c.id === cid; })[0];
+      if (!customer && !off) { fail('Pelanggan tidak ditemukan (mungkin sudah dihapus).'); }
+    }
+    var discType = p.discount_type || 'none';
+    if (['none', 'percent', 'amount'].indexOf(discType) < 0) { fail('Jenis diskon tidak valid.'); }
+    var discValue = 0;
+    if (discType !== 'none') {
+      discValue = num(p.discount_value || 0, 'Diskon', 0, 1e12);
+      if (discType === 'percent' && discValue > 100) { fail('Diskon persen tidak boleh lebih dari 100.'); }
+      if (discValue === 0) { discType = 'none'; }
+    }
+    var method = String(p.payment_method || '');
+    if (METHODS.indexOf(method) < 0) { fail('Metode pembayaran tidak valid.'); }
+    var note = str(p.note, 200, 'Catatan', false);
+
+    var settings = loadSettings();
+    var products = db.all('Products');
+    var byId = {};
+    products.forEach(function (x) { byId[x.id] = x; });
+
+    var lines = [], subtotal = 0;
+    order.forEach(function (pid) {
+      var pr = byId[pid], q = qtyById[pid];
+      if (!pr) {
+        if (!off) { fail('Ada produk yang sudah dihapus. Muat ulang halaman kasir.'); }
+        pr = { id: pid, name: meta[pid].name || ('Produk #' + pid), type: 'barang', price: 0, cost_price: 0, track_stock: false, stock: 0 };
+      }
+      if (!off && pr.track_stock && pr.stock < q) { fail('Stok "' + pr.name + '" tidak cukup (tersisa ' + pr.stock + ', diminta ' + q + ').'); }
+      var price = off ? meta[pid].price : pr.price;
+      var sub = round2_(price * q);
+      subtotal += sub;
+      lines.push({ pr: pr, qty: q, price: price, subtotal: sub });
+    });
+    subtotal = round2_(subtotal);
+    var taxRate = off ? off.tax_rate : settings.tax_rate;
+    var tot = computeTotals(subtotal, discType, discValue, taxRate);
+    var paid = tot.grand, change = 0;
+    if (method === 'cash') {
+      paid = num(p.amount_paid || 0, 'Uang diterima', 0, 1e13);
+      if (paid + 0.0001 < tot.grand) { fail('Uang yang diterima kurang dari total belanja.'); }
+      change = round2_(paid - tot.grand);
+    }
+
+    // nomor invoice otomatis: YY-KODE-URUT6, urutan mulai 1 tiap tahun
+    var now = P.now(), yy = currentYY();
+    var kv = db.kv();
+    var seq = (kv.inv_year === yy) ? (Number(kv.inv_next) || 1) : 1;
+    var no = invoiceNo(yy, settings.inv_code, seq);
+
+    var sl = off ? off.seller : user;
+    var tx = db.insert('Transactions', {
+      invoice_no: no, date: off ? off.date : fmtDateTime_(now), user_id: sl.id, user_name: sl.full_name,
+      customer_id: customer ? customer.id : 0, customer_name: customer ? customer.name : '', customer_addr: customer ? customer.address : '',
+      subtotal: subtotal, discount_type: discType, discount_value: discValue, discount_amount: tot.discount,
+      tax_rate: taxRate, tax_amount: tot.tax, grand_total: tot.grand,
+      method: method, amount_paid: paid, change: change, status: 'completed', note: note, client_ref: ref, source: off ? 'offline' : 'online'
+    });
+    var itemRows = lines.map(function (l) {
+      return { tx_id: tx.id, invoice_no: no, date: tx.date, user_id: sl.id, product_id: l.pr.id, name: l.pr.name, type: l.pr.type,
+               qty: l.qty, price: l.price, cost: l.pr.cost_price, subtotal: l.subtotal };
+    });
+    var saved = db.insertMany('TxItems', itemRows);
+    lines.forEach(function (l) {
+      if (l.pr.track_stock) { var cur = db.all('Products').filter(function (x) { return x.id === l.pr.id; })[0]; db.update('Products', l.pr.id, { stock: cur.stock - l.qty }); }
+    });
+    db.kvWrite({ inv_year: yy, inv_next: String(seq + 1) }, []);
+    return txPayload(tx, saved);
+  } };
+
+  A.txList = { roles: ['admin', 'kasir'], run: function (p, user) {
+    var today = fmtDate_(P.now());
+    var from = isYmd_(p.from) ? p.from : today, to = isYmd_(p.to) ? p.to : today;
+    if (to < from) { var t0 = from; from = to; to = t0; }
+    var q = String(p.q || '').toLowerCase().trim();
+    var uid = user.role === 'admin' ? Number(p.user_id || 0) : user.id;
+    var rows = db.all('Transactions').filter(function (t) {
+      var d = t.date.slice(0, 10);
+      if (d < from || d > to) { return false; }
+      if (uid && t.user_id !== uid) { return false; }
+      if (q && (t.invoice_no + ' ' + t.customer_name + ' ' + t.user_name).toLowerCase().indexOf(q) < 0) { return false; }
+      return true;
+    });
+    rows.sort(function (a, b) { return b.id - a.id; });
+    var total = rows.length;
+    return { total: total, from: from, to: to, rows: rows.slice(0, 300).map(txSummary) };
+  } };
+
+  function loadTx(id, user) {
+    id = refId(id, 'Transaksi');
+    var t = db.all('Transactions').filter(function (x) { return x.id === id; })[0];
+    if (!t) { fail('Transaksi tidak ditemukan.'); }
+    if (user.role !== 'admin' && t.user_id !== user.id) { fail('Anda hanya dapat melihat transaksi milik sendiri.', 'FORBIDDEN'); }
+    var items = db.all('TxItems').filter(function (i) { return i.tx_id === t.id; });
+    return txPayload(t, items);
+  }
+  A.txGet = { roles: ['admin', 'kasir'], run: function (p, user) { return loadTx(p.id, user); } };
+  A.invoiceGet = { roles: ['admin', 'kasir'], run: function (p, user) {
+    var t = loadTx(p.id, user);
+    if (!t.invoice_eligible) { fail('Invoice hanya untuk pelanggan terdaftar dengan pembayaran tunai atau transfer.'); }
+    var c = db.all('Customers').filter(function (x) { return x.id === t.customer_id; })[0];
+    if (c) { t.customer = c.name; t.customer_addr = c.address; }
+    return t;
+  } };
+
+  /* ----- produk (admin) ----- */
+  A.productList = { roles: ['admin'], run: function () {
+    return { products: db.all('Products').map(function (p) { return pubProduct(p, true); }), categories: db.all('Categories').map(function (c) { return c.name; }) };
+  } };
+
+  A.productSave = { roles: ['admin'], write: true, run: function (p, user) {
+    var type = p.type === 'jasa' ? 'jasa' : 'barang';
+    var o = {
+      type: type, name: str(p.name, 150, 'Nama', true), category: str(p.category, 60, 'Kategori', false),
+      sku: str(p.sku, 50, 'SKU', false), barcode: str(p.barcode, 64, 'Barcode', false), unit: str(p.unit, 20, 'Satuan', false) || (type === 'jasa' ? 'jasa' : 'pcs'),
+      price: num(p.price, 'Harga jual', 0, 1e12), cost_price: num(p.cost_price || 0, 'Harga modal', 0, 1e12),
+      min_stock: int(p.min_stock || 0, 'Stok minimum', 0, 1e9),
+      track_stock: type === 'barang' && p.track_stock !== false
+    };
+    var all = db.all('Products'), id = p.id ? refId(p.id, 'Produk') : 0;
+    all.forEach(function (x) {
+      if (x.id === id) { return; }
+      if (o.sku && x.sku.toLowerCase() === o.sku.toLowerCase()) { fail('SKU "' + o.sku + '" sudah dipakai produk "' + x.name + '".'); }
+      if (o.barcode && x.barcode === o.barcode) { fail('Barcode "' + o.barcode + '" sudah dipakai produk "' + x.name + '".'); }
+    });
+    if (o.category) {
+      var has = db.all('Categories').some(function (c) { return c.name.toLowerCase() === o.category.toLowerCase(); });
+      if (!has) { db.insert('Categories', { name: o.category }); }
+    }
+    var res;
+    if (id) {
+      if (!all.some(function (x) { return x.id === id; })) { fail('Produk tidak ditemukan.'); }
+      res = db.update('Products', id, o);
+    } else {
+      o.stock = o.track_stock ? int(p.stock || 0, 'Stok awal', 0, 1e9) : 0;
+      o.created_at = fmtDateTime_(P.now());
+      res = db.insert('Products', o);
+      if (o.stock > 0) { db.insert('StockLog', { date: o.created_at, product_id: res.id, name: res.name, user_name: user.full_name, type: 'awal', change: o.stock, before: 0, after: o.stock, note: 'Stok awal' }); }
+    }
+    return pubProduct(res, true);
+  } };
+
+  A.productDelete = { roles: ['admin'], write: true, run: function (p) {
+    var ids = idList(p.ids);
+    return { deleted: db.removeMany('Products', ids) };
+  } };
+
+  A.productStock = { roles: ['admin'], write: true, run: function (p, user) {
+    var id = refId(p.id, 'Produk'), mode = String(p.mode);
+    var pr = db.all('Products').filter(function (x) { return x.id === id; })[0];
+    if (!pr) { fail('Produk tidak ditemukan.'); }
+    if (!pr.track_stock) { fail('Produk ini tidak memakai stok (jasa / stok tidak dilacak).'); }
+    var q = int(p.qty, 'Jumlah', 0, 1e9), after;
+    if (mode === 'add') { after = pr.stock + q; }
+    else if (mode === 'sub') { after = pr.stock - q; if (after < 0) { fail('Stok tidak bisa kurang dari 0 (stok saat ini ' + pr.stock + ').'); } }
+    else if (mode === 'set') { after = q; }
+    else { fail('Jenis penyesuaian stok tidak valid.'); }
+    var res = db.update('Products', id, { stock: after });
+    db.insert('StockLog', { date: fmtDateTime_(P.now()), product_id: id, name: pr.name, user_name: user.full_name, type: mode, change: after - pr.stock, before: pr.stock, after: after, note: str(p.note, 150, 'Catatan', false) });
+    return pubProduct(res, true);
+  } };
+
+  /* ----- pelanggan (admin) ----- */
+  A.customerList = { roles: ['admin'], run: function () {
+    return { customers: db.all('Customers').map(pubCustomer) };
+  } };
+  A.customerSave = { roles: ['admin'], write: true, run: function (p) {
+    var o = {
+      name: str(p.name, 100, 'Nama pelanggan', true), phone: str(p.phone, 30, 'Telepon', false),
+      email: str(p.email, 100, 'Email', false), address: str(p.address, 250, 'Alamat', false)
+    };
+    if (o.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email)) { fail('Format email tidak valid.'); }
+    var id = p.id ? refId(p.id, 'Pelanggan') : 0, res;
+    if (id) {
+      if (!db.all('Customers').some(function (c) { return c.id === id; })) { fail('Pelanggan tidak ditemukan.'); }
+      res = db.update('Customers', id, o);
+    } else {
+      o.created_at = fmtDateTime_(P.now());
+      res = db.insert('Customers', o);
+    }
+    return pubCustomer(res);
+  } };
+  A.customerDelete = { roles: ['admin'], write: true, run: function (p) {
+    return { deleted: db.removeMany('Customers', idList(p.ids)) };
+  } };
+
+  /* ----- pengguna (admin) ----- */
+  function pubUserFull(u) {
+    return { id: u.id, username: u.username, full_name: u.full_name, role: u.role, active: u.active, last_login: u.last_login, created_at: u.created_at };
+  }
+  function activeAdmins(users, exceptIds) {
+    return users.filter(function (u) { return u.role === 'admin' && u.active && exceptIds.indexOf(u.id) < 0; }).length;
+  }
+  A.userList = { roles: ['admin'], run: function () {
+    return { users: db.all('Users').map(pubUserFull) };
+  } };
+  A.userSave = { roles: ['admin'], write: true, run: function (p, me) {
+    var users = db.all('Users');
+    var id = p.id ? refId(p.id, 'User') : 0;
+    var role = String(p.role);
+    if (ROLES.indexOf(role) < 0) { fail('Peran user tidak valid.'); }
+    var full = str(p.full_name, 100, 'Nama lengkap', true);
+    var active = p.active !== false;
+    var pw = String(p.password || '');
+    if (id) {
+      var u = users.filter(function (x) { return x.id === id; })[0];
+      if (!u) { fail('User tidak ditemukan.'); }
+      if (id === me.id && (role !== 'admin' || !active)) { fail('Anda tidak dapat menurunkan peran atau menonaktifkan akun Anda sendiri.'); }
+      if ((u.role === 'admin' && u.active) && (role !== 'admin' || !active) && activeAdmins(users, [id]) < 1) { fail('Harus tersisa minimal satu Kasir Admin aktif.'); }
+      var patch = { full_name: full, role: role, active: active };
+      if (pw) {
+        if (pw.length < 6) { fail('Password minimal 6 karakter.'); }
+        patch.salt = newSalt(); patch.pass_hash = hashPw(patch.salt, pw);
+      }
+      return pubUserFull(db.update('Users', id, patch));
+    }
+    var uname = str(p.username, 30, 'Username', true).toLowerCase();
+    if (!/^[a-z0-9._-]{3,30}$/.test(uname)) { fail('Username 3-30 karakter: huruf kecil, angka, titik, strip, atau garis bawah.'); }
+    if (users.some(function (x) { return x.username.toLowerCase() === uname; })) { fail('Username "' + uname + '" sudah dipakai.'); }
+    if (pw.length < 6) { fail('Password minimal 6 karakter.'); }
+    var salt = newSalt();
+    return pubUserFull(db.insert('Users', { username: uname, salt: salt, pass_hash: hashPw(salt, pw), full_name: full, role: role, active: active, last_login: '', created_at: fmtDateTime_(P.now()) }));
+  } };
+  A.userDelete = { roles: ['admin'], write: true, run: function (p, me) {
+    var ids = idList(p.ids);
+    if (ids.indexOf(me.id) >= 0) { fail('Anda tidak dapat menghapus akun Anda sendiri.'); }
+    if (activeAdmins(db.all('Users'), ids) < 1) { fail('Harus tersisa minimal satu Kasir Admin aktif.'); }
+    return { deleted: db.removeMany('Users', ids) };
+  } };
+  A.passwordChange = { roles: ['admin', 'kasir'], write: true, run: function (p, me) {
+    var cur = String(p.current || ''), nw = String(p.password || '');
+    if (hashPw(me.salt, cur) !== me.pass_hash) { fail('Password saat ini salah.'); }
+    if (nw.length < 6) { fail('Password baru minimal 6 karakter.'); }
+    var salt = newSalt(), h = hashPw(salt, nw);
+    db.update('Users', me.id, { salt: salt, pass_hash: h });
+    return { token: makeToken({ id: me.id, pass_hash: h }) };
+  } };
+
+  /* ----- gambar QRIS (dibaca kasir saat pembayaran QRIS) ----- */
+  A.qrisGet = { roles: ['admin', 'kasir'], run: function () {
+    var kv = db.kv(), parts = [], i = 0;
+    while (kv['qris_image_' + i] !== undefined && kv['qris_image_' + i] !== '') { parts.push(kv['qris_image_' + i]); i++; }
+    return { image: parts.join('') };
+  } };
+
+  /* ----- pengaturan (admin) ----- */
+  A.settingsSave = { roles: ['admin'], write: true, run: function (p) {
+    var set = {}, del = [], cur = loadSettings();
+    var textKeys = { store_name: [100, true], store_address: [250, false], store_phone: [40, false], store_email: [100, false], tax_no: [40, false],
+                     bank_name: [60, false], bank_account: [60, false], bank_holder: [80, false], receipt_footer: [250, false],
+                     parfum_list: [300, false], wa_tpl_terima: [600, false], wa_tpl_siap: [600, false] };
+    if (p.order_prefix !== undefined) { var pf = str(p.order_prefix, 6, 'Awalan nomor order', true).toUpperCase(); if (!/^[A-Z0-9]{1,6}$/.test(pf)) { fail('Awalan nomor order hanya huruf/angka (contoh: CA).'); } set.order_prefix = pf; }
+    Object.keys(textKeys).forEach(function (k) {
+      if (p[k] !== undefined) { set[k] = str(p[k], textKeys[k][0], k === 'store_name' ? 'Nama toko' : 'Isian', textKeys[k][1]); }
+    });
+    if (p.tax_rate !== undefined) { set.tax_rate = String(num(p.tax_rate, 'Pajak', 0, 100)); }
+    if (p.paper_width !== undefined) { set.paper_width = Number(p.paper_width) === 58 ? '58' : '80'; }
+    if (p.show_logo_on_receipt !== undefined) { set.show_logo_on_receipt = p.show_logo_on_receipt ? '1' : '0'; }
+    if (p.auto_print !== undefined) { set.auto_print = p.auto_print ? '1' : '0'; }
+    if (p.theme && typeof p.theme === 'object') {
+      ['brand', 'accent', 'pay', 'bar'].forEach(function (k) {
+        if (p.theme[k] === undefined) { return; }
+        var v = String(p.theme[k] || '').trim().toLowerCase();
+        if (v && !/^#[0-9a-f]{6}$/.test(v)) { fail('Kode warna tidak valid (contoh: #0e8a6f).'); }
+        set['theme_' + k] = v;
+      });
+    }
+    if (p.inv_code !== undefined) {
+      var code = str(p.inv_code, 10, 'Kode invoice', true);
+      if (!/^[A-Za-z0-9]{1,10}$/.test(code)) { fail('Kode invoice hanya huruf/angka (contoh: 200).'); }
+      set.inv_code = code;
+    }
+    if (p.inv_next !== undefined && Number(p.inv_next) !== cur.inv_next) {
+      var nx = int(p.inv_next, 'Nomor urut invoice', 1, 999999);
+      var yy = cur.inv_yy, maxSeq = 0;
+      db.all('Transactions').forEach(function (t) {
+        var m = /^(\d{2})-[^-]+-(\d+)$/.exec(t.invoice_no);
+        if (m && m[1] === yy && Number(m[2]) > maxSeq) { maxSeq = Number(m[2]); }
+      });
+      if (nx <= maxSeq) { fail('Nomor urut harus lebih besar dari nomor terakhir yang sudah dipakai tahun ini (' + maxSeq + ').'); }
+      set.inv_year = yy; set.inv_next = String(nx);
+    }
+    var kvNow = db.kv();
+    function imageKeys(prefix) { var re = new RegExp('^' + prefix + '_\\d+$'); return Object.keys(kvNow).filter(function (k) { return re.test(k); }); }
+    function putImage(prefix, data, maxLen, label) {
+      var d = String(data);
+      if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(d)) { fail('Format ' + label + ' harus PNG, JPG, atau WebP.'); }
+      if (d.length > maxLen) { fail('Ukuran ' + label + ' terlalu besar. Gunakan gambar yang lebih kecil.'); }
+      imageKeys(prefix).forEach(function (k) { del.push(k); });
+      for (var i = 0, n = 0; i < d.length; i += 40000, n++) { set[prefix + '_' + n] = d.slice(i, i + 40000); }
+      del = del.filter(function (k) { return !Object.prototype.hasOwnProperty.call(set, k); });
+    }
+    if (p.logo_delete) { imageKeys('store_logo').forEach(function (k) { del.push(k); }); }
+    else if (p.logo) { putImage('store_logo', p.logo, 300000, 'logo'); }
+    if (p.qris_delete) { imageKeys('qris_image').forEach(function (k) { del.push(k); }); }
+    else if (p.qris) { putImage('qris_image', p.qris, 400000, 'gambar QRIS'); }
+    db.kvWrite(set, del);
+    return loadSettings();
+  } };
+
+  /* ================================================================
+     LAPORAN
+     ================================================================ */
+  function normRange(p) {
+    var today = fmtDate_(P.now());
+    var from = isYmd_(p.from) ? p.from : today, to = isYmd_(p.to) ? p.to : today;
+    if (to < from) { var t = from; from = to; to = t; }
+    if (diffDays_(from, to) > 400) { fail('Rentang laporan maksimal 400 hari.'); }
+    return { from: from, to: to };
+  }
+  function txInRange(r) {
+    return db.all('Transactions').filter(function (t) { var d = t.date.slice(0, 10); return t.status === 'completed' && d >= r.from && d <= r.to; });
+  }
+  function itemsInRange(r) {
+    return db.all('TxItems').filter(function (i) { var d = i.date.slice(0, 10); return d >= r.from && d <= r.to; });
+  }
+  function costByTx(items) {
+    var m = {};
+    items.forEach(function (i) { m[i.tx_id] = (m[i.tx_id] || 0) + i.cost * i.qty; });
+    return m;
+  }
+  function netOf(t) { return t.subtotal - t.discount_amount; }
+
+  A.dashboard = { roles: ['admin'], run: function (p) {
+    var r = normRange(p);
+    var txs = txInRange(r), items = itemsInRange(r), cost = costByTx(items);
+    var k = { sales: 0, tx: txs.length, qty: 0, profit: 0, discount: 0, tax: 0 };
+    var dayMap = {}, methods = {};
+    var n = diffDays_(r.from, r.to);
+    for (var d = 0; d <= n; d++) { var ds = addDays_(r.from, d); dayMap[ds] = { date: ds, sales: 0, tx: 0, qty: 0 }; }
+    txs.forEach(function (t) {
+      k.sales += t.grand_total; k.discount += t.discount_amount; k.tax += t.tax_amount;
+      k.profit += netOf(t) - (cost[t.id] || 0);
+      var dm = dayMap[t.date.slice(0, 10)]; dm.sales += t.grand_total; dm.tx += 1;
+      var m = methods[t.method] || (methods[t.method] = { method: t.method, tx: 0, sales: 0 });
+      m.tx += 1; m.sales += t.grand_total;
+    });
+    var prod = {}, byType = { barang: { qty: 0, sales: 0 }, jasa: { qty: 0, sales: 0 } };
+    items.forEach(function (i) {
+      k.qty += i.qty;
+      dayMap[i.date.slice(0, 10)].qty += i.qty;
+      var key = i.product_id;
+      var e = prod[key] || (prod[key] = { product_id: i.product_id, name: i.name, type: i.type, qty: 0, sales: 0, profit: 0 });
+      e.name = i.name; e.qty += i.qty; e.sales += i.subtotal; e.profit += i.subtotal - i.cost * i.qty;
+      var bt = byType[i.type === 'jasa' ? 'jasa' : 'barang']; bt.qty += i.qty; bt.sales += i.subtotal;
+    });
+    var itemsOut = Object.keys(prod).map(function (x) { return prod[x]; }).sort(function (a, b) { return b.qty - a.qty || b.sales - a.sales; });
+
+    // periode pembanding: rentang sama panjang tepat sebelum periode ini
+    var len = n + 1, pr = { from: addDays_(r.from, -len), to: addDays_(r.from, -1) };
+    var ptx = txInRange(pr), prevSales = 0;
+    ptx.forEach(function (t) { prevSales += t.grand_total; });
+
+    var low = db.all('Products').filter(function (x) { return x.track_stock && x.stock <= x.min_stock; })
+      .sort(function (a, b) { return a.stock - b.stock; }).slice(0, 12)
+      .map(function (x) { return { id: x.id, name: x.name, stock: x.stock, min_stock: x.min_stock, unit: x.unit }; });
+
+    return {
+      range: r, kpi: k, prev: { sales: prevSales, tx: ptx.length, from: pr.from, to: pr.to },
+      daily: Object.keys(dayMap).sort().map(function (x) { return dayMap[x]; }),
+      methods: Object.keys(methods).map(function (x) { return methods[x]; }).sort(function (a, b) { return b.sales - a.sales; }),
+      items: itemsOut, byType: byType, low_stock: low,
+      laundry: laundryDashboard(r)
+    };
+  } };
+
+  /* ================================================================
+     LAUNDRY (CuciAja): layanan, order cucian, pembayaran, status
+     ================================================================ */
+  var ORDER_ACTIVE = ['diterima', 'dicuci', 'disetrika', 'siap'];
+  var ORDER_STATUSES = ORDER_ACTIVE.concat(['diambil', 'batal']);
+  var LAUNDRY_UNITS = ['kg', 'pcs', 'pasang', 'meter'];
+  var LAUNDRY_METHODS = ['cash', 'transfer', 'qris', 'debit'];
+
+  function pubLayanan(s) { return { id: s.id, name: s.name, unit: s.unit, price: s.price, duration_hours: s.duration_hours, active: s.active, sort: s.sort }; }
+  function layananSorted(onlyActive) {
+    return db.all('LaundryServices').filter(function (s) { return !onlyActive || s.active; })
+      .sort(function (a, b) { return (a.sort - b.sort) || (a.id - b.id); }).map(pubLayanan);
+  }
+  function fmtQty(q) { return String(Math.round(q * 100) / 100).replace('.', ','); }
+  function pubOrder(o, detail) {
+    var r = { id: o.id, order_no: o.order_no, date_in: o.date_in, due_at: o.due_at, user_id: o.user_id, user_name: o.user_name,
+      customer_id: o.customer_id, customer_name: o.customer_name, customer_phone: o.customer_phone,
+      subtotal: o.subtotal, discount: o.discount, total: o.total, paid: o.paid, remaining: round2_(Math.max(0, o.total - o.paid)),
+      kg: o.kg, summary: o.summary, status: o.status, picked_at: o.picked_at, parfum: o.parfum, note: o.note };
+    if (detail) {
+      r.items = db.all('OrderItems').filter(function (i) { return i.order_id === o.id; })
+        .map(function (i) { return { service_id: i.service_id, name: i.name, unit: i.unit, qty: i.qty, price: i.price, subtotal: i.subtotal }; });
+      r.payments = db.all('OrderPayments').filter(function (x) { return x.order_id === o.id; })
+        .map(function (x) { return { date: x.date, amount: x.amount, method: x.method, kind: x.kind, user_name: x.user_name }; });
+      r.log = db.all('OrderLog').filter(function (x) { return x.order_id === o.id; })
+        .map(function (x) { return { date: x.date, status: x.status, user_name: x.user_name, note: x.note }; });
+    }
+    return r;
+  }
+  function findOrder(id) {
+    id = refId(id, 'Order');
+    var o = db.all('Orders').filter(function (x) { return x.id === id; })[0];
+    if (!o) { fail('Order tidak ditemukan.'); }
+    return o;
+  }
+  function addLog(o, status, user, note) {
+    db.insert('OrderLog', { order_id: o.id, date: fmtDateTime_(P.now()), status: status, user_name: user.full_name, note: note || '' });
+  }
+  function addPayment(o, amount, method, kind, user) {
+    if (LAUNDRY_METHODS.indexOf(method) < 0) { fail('Metode pembayaran tidak valid.'); }
+    db.insert('OrderPayments', { order_id: o.id, order_no: o.order_no, date: fmtDateTime_(P.now()), amount: amount, method: method, kind: kind, user_id: user.id, user_name: user.full_name });
+    return db.update('Orders', o.id, { paid: round2_(o.paid + amount) });
+  }
+  function isDateTime(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s); }
+
+  A.layananList = { roles: ['admin', 'kasir'], run: function () { return { rows: layananSorted(false) }; } };
+
+  A.layananSave = { roles: ['admin'], write: true, run: function (p) {
+    var unit = String(p.unit || 'kg');
+    if (LAUNDRY_UNITS.indexOf(unit) < 0) { fail('Satuan layanan tidak valid.'); }
+    var o = { name: str(p.name, 100, 'Nama layanan', true), unit: unit, price: num(p.price, 'Harga', 0, 1e10),
+      duration_hours: int(p.duration_hours || 0, 'Estimasi', 0, 24 * 60), active: p.active !== false, sort: int(p.sort || 0, 'Urutan', 0, 9999) };
+    var id = p.id ? refId(p.id, 'Layanan') : 0;
+    var all = db.all('LaundryServices');
+    if (all.some(function (x) { return x.id !== id && x.name.toLowerCase() === o.name.toLowerCase(); })) { fail('Layanan "' + o.name + '" sudah ada.'); }
+    if (id) {
+      if (!all.some(function (x) { return x.id === id; })) { fail('Layanan tidak ditemukan.'); }
+      return pubLayanan(db.update('LaundryServices', id, o));
+    }
+    o.created_at = fmtDateTime_(P.now());
+    return pubLayanan(db.insert('LaundryServices', o));
+  } };
+
+  A.layananDelete = { roles: ['admin'], write: true, run: function (p) {
+    return { deleted: db.removeMany('LaundryServices', idList(p.ids)) };
+  } };
+
+  A.orderCreate = { roles: ['admin', 'kasir'], write: true, run: function (p, user) {
+    // pelanggan: terdaftar (customer_id) atau baru (customer_name + customer_phone)
+    var cust = null;
+    if (p.customer_id) {
+      var cid = refId(p.customer_id, 'Pelanggan');
+      cust = db.all('Customers').filter(function (c) { return c.id === cid; })[0];
+      if (!cust) { fail('Pelanggan tidak ditemukan.'); }
+      var ph = str(p.customer_phone, 30, 'No. WhatsApp', false);
+      if (ph && ph !== cust.phone) { cust = db.update('Customers', cust.id, { phone: ph }); }
+    } else {
+      var nm = str(p.customer_name, 100, 'Nama pelanggan', true);
+      var phone = str(p.customer_phone, 30, 'No. WhatsApp', false);
+      var same = db.all('Customers').filter(function (c) { return c.name.toLowerCase() === nm.toLowerCase() && (!phone || c.phone === phone); })[0];
+      cust = same || db.insert('Customers', { name: nm, phone: phone, email: '', address: '', created_at: fmtDateTime_(P.now()) });
+    }
+    var raw = p.items;
+    if (!Array.isArray(raw) || !raw.length) { fail('Pilih minimal satu layanan.'); }
+    if (raw.length > 50) { fail('Terlalu banyak baris layanan.'); }
+    var svc = {}; db.all('LaundryServices').forEach(function (s) { svc[s.id] = s; });
+    var lines = [], subtotal = 0, kg = 0, maxH = 0;
+    raw.forEach(function (it) {
+      var s = svc[refId(it && it.service_id, 'Layanan')];
+      if (!s) { fail('Ada layanan yang sudah dihapus. Muat ulang halaman.'); }
+      var q = num(it.qty, 'Jumlah ' + s.name, 0.01, 100000);
+      q = Math.round(q * 100) / 100;
+      if (s.unit !== 'kg' && s.unit !== 'meter' && Math.floor(q) !== q) { fail('Jumlah "' + s.name + '" harus bilangan bulat.'); }
+      var sub = round0_(s.price * q);
+      subtotal += sub; if (s.unit === 'kg') { kg += q; }
+      if (s.duration_hours > maxH) { maxH = s.duration_hours; }
+      lines.push({ s: s, qty: q, sub: sub });
+    });
+    var disc = num(p.discount || 0, 'Diskon', 0, subtotal);
+    var total = round0_(subtotal - disc);
+    var now = P.now();
+    var due = isDateTime(p.due_at) ? (p.due_at.length === 16 ? p.due_at + ':00' : p.due_at) : fmtDateTime_(new Date(now.getTime() + maxH * 3600000));
+    var payAmount = num(p.pay_amount || 0, 'Pembayaran', 0, total);
+    var method = String(p.pay_method || 'cash');
+    if (payAmount > 0 && LAUNDRY_METHODS.indexOf(method) < 0) { fail('Metode pembayaran tidak valid.'); }
+
+    var st = loadSettings(), yy = currentYY(), kv = db.kv();
+    var seq = (kv.order_year === yy) ? (Number(kv.order_next) || 1) : 1;
+    var no = (st.order_prefix || 'CA') + yy + '-' + pad_(seq, 5);
+    var summary = lines.map(function (l) { return fmtQty(l.qty) + ' ' + l.s.unit + ' ' + l.s.name; }).join(', ');
+    var o = db.insert('Orders', {
+      order_no: no, date_in: fmtDateTime_(now), due_at: due, user_id: user.id, user_name: user.full_name,
+      customer_id: cust.id, customer_name: cust.name, customer_phone: cust.phone,
+      subtotal: subtotal, discount: disc, total: total, paid: 0, kg: Math.round(kg * 100) / 100, summary: summary.slice(0, 300),
+      status: 'diterima', picked_at: '', parfum: str(p.parfum, 60, 'Parfum', false), note: str(p.note, 300, 'Catatan', false)
+    });
+    lines.forEach(function (l) {
+      db.insert('OrderItems', { order_id: o.id, service_id: l.s.id, name: l.s.name, unit: l.s.unit, qty: l.qty, price: l.s.price, subtotal: l.sub });
+    });
+    addLog(o, 'diterima', user, '');
+    if (payAmount > 0) { o = addPayment(o, payAmount, method, payAmount >= total ? 'lunas' : 'dp', user); }
+    db.kvWrite({ order_year: yy, order_next: String(seq + 1) }, []);
+    return pubOrder(o, true);
+  } };
+
+  A.orderList = { roles: ['admin', 'kasir'], run: function (p) {
+    var group = String(p.group || 'aktif'), q = String(p.q || '').toLowerCase().trim();
+    var all = db.all('Orders');
+    var counts = {}; ORDER_STATUSES.forEach(function (s) { counts[s] = 0; });
+    all.forEach(function (o) { counts[o.status] = (counts[o.status] || 0) + 1; });
+    counts.aktif = ORDER_ACTIVE.reduce(function (a, s) { return a + counts[s]; }, 0);
+    var rows = all.filter(function (o) {
+      if (q) { return (o.order_no + ' ' + o.customer_name + ' ' + o.customer_phone).toLowerCase().indexOf(q) >= 0; }
+      if (group === 'aktif') { return ORDER_ACTIVE.indexOf(o.status) >= 0; }
+      if (group === 'belum_lunas') { return o.status !== 'batal' && o.paid < o.total; }
+      return o.status === group;
+    });
+    if (group === 'diambil' || group === 'batal' || q) { rows.sort(function (a, b) { return b.id - a.id; }); }
+    else { rows.sort(function (a, b) { return a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : a.id - b.id; }); }
+    counts.belum_lunas = all.filter(function (o) { return o.status !== 'batal' && o.paid < o.total; }).length;
+    return { counts: counts, total: rows.length, rows: rows.slice(0, 300).map(function (o) { return pubOrder(o, false); }), now: fmtDateTime_(P.now()) };
+  } };
+
+  A.orderHistory = { roles: ['admin', 'kasir'], run: function (p) {
+    var today = fmtDate_(P.now());
+    var from = isYmd_(p.from) ? p.from : today, to = isYmd_(p.to) ? p.to : today;
+    if (to < from) { var t0 = from; from = to; to = t0; }
+    var st = String(p.status || 'semua'), q = String(p.q || '').toLowerCase().trim();
+    var rows = db.all('Orders').filter(function (o) {
+      var d = o.date_in.slice(0, 10);
+      if (d < from || d > to) { return false; }
+      if (st === 'selesai' && o.status !== 'diambil') { return false; }
+      if (st === 'aktif' && ORDER_ACTIVE.indexOf(o.status) < 0) { return false; }
+      if (st === 'batal' && o.status !== 'batal') { return false; }
+      if (st === 'belum_lunas' && (o.status === 'batal' || o.paid >= o.total)) { return false; }
+      if (q && (o.order_no + ' ' + o.customer_name + ' ' + o.customer_phone + ' ' + o.summary).toLowerCase().indexOf(q) < 0) { return false; }
+      return true;
+    });
+    rows.sort(function (a, b) { return a.date_in < b.date_in ? 1 : a.date_in > b.date_in ? -1 : b.id - a.id; });
+    var sum = { count: rows.length, orders: 0, total: 0, paid: 0, remaining: 0, kg: 0, done: 0, cancel: 0 };
+    rows.forEach(function (o) {
+      if (o.status === 'batal') { sum.cancel++; return; }
+      sum.orders++; sum.total += o.total; sum.paid += o.paid; sum.remaining += Math.max(0, o.total - o.paid); sum.kg += o.kg;
+      if (o.status === 'diambil') { sum.done++; }
+    });
+    ['total', 'paid', 'remaining', 'kg'].forEach(function (k) { sum[k] = round2_(sum[k]); });
+    return { from: from, to: to, sum: sum, total: rows.length, rows: rows.slice(0, p.all ? 20000 : 500).map(function (o) { return pubOrder(o, false); }) };
+  } };
+
+  A.orderGet = { roles: ['admin', 'kasir'], run: function (p) { return pubOrder(findOrder(p.id), true); } };
+
+  A.orderStatus = { roles: ['admin', 'kasir'], write: true, run: function (p, user) {
+    var o = findOrder(p.id), st = String(p.status);
+    if (ORDER_ACTIVE.indexOf(st) < 0) { fail('Status tidak valid.'); }
+    if (o.status === 'diambil' || o.status === 'batal') { fail('Order ini sudah ' + (o.status === 'batal' ? 'dibatalkan' : 'diambil') + '.'); }
+    if (o.status === st) { return pubOrder(o, true); }
+    o = db.update('Orders', o.id, { status: st });
+    addLog(o, st, user, '');
+    return pubOrder(o, true);
+  } };
+
+  A.orderPay = { roles: ['admin', 'kasir'], write: true, run: function (p, user) {
+    var o = findOrder(p.id);
+    if (o.status === 'batal') { fail('Order ini sudah dibatalkan.'); }
+    var rem = round2_(o.total - o.paid);
+    if (rem <= 0) { fail('Order ini sudah lunas.'); }
+    var amt = num(p.amount, 'Jumlah bayar', 1, rem);
+    o = addPayment(o, amt, String(p.method || 'cash'), amt >= rem ? 'pelunasan' : 'cicilan', user);
+    return pubOrder(o, true);
+  } };
+
+  A.orderPickup = { roles: ['admin', 'kasir'], write: true, run: function (p, user) {
+    var o = findOrder(p.id);
+    if (o.status === 'diambil') { fail('Cucian ini sudah diambil.'); }
+    if (o.status === 'batal') { fail('Order ini sudah dibatalkan.'); }
+    var rem = round2_(o.total - o.paid);
+    if (rem > 0) {
+      var amt = num(p.pay_amount || 0, 'Pembayaran', 0, rem);
+      if (amt < rem) { fail('Masih ada sisa tagihan Rp ' + Math.round(rem).toLocaleString('id-ID') + '. Lunasi dulu sebelum cucian diserahkan.'); }
+      o = addPayment(o, rem, String(p.method || 'cash'), 'pelunasan', user);
+    }
+    o = db.update('Orders', o.id, { status: 'diambil', picked_at: fmtDateTime_(P.now()) });
+    addLog(o, 'diambil', user, str(p.note, 200, 'Catatan', false));
+    return pubOrder(o, true);
+  } };
+
+  A.orderCancel = { roles: ['admin'], write: true, run: function (p, user) {
+    var o = findOrder(p.id);
+    if (o.status === 'diambil') { fail('Cucian yang sudah diambil tidak bisa dibatalkan.'); }
+    if (o.status === 'batal') { return pubOrder(o, true); }
+    o = db.update('Orders', o.id, { status: 'batal' });
+    addLog(o, 'batal', user, str(p.reason, 200, 'Alasan', false));
+    return pubOrder(o, true);
+  } };
+
+  function laundryDashboard(r) {
+    var from = r.from + ' 00:00:00', to = r.to + ' 23:59:59', nowS = fmtDateTime_(P.now());
+    var orders = db.all('Orders');
+    var inRange = orders.filter(function (o) { return o.status !== 'batal' && o.date_in >= from && o.date_in <= to; });
+    var pays = db.all('OrderPayments').filter(function (x) { return x.date >= from && x.date <= to; });
+    var cancelled = {}; orders.forEach(function (o) { if (o.status === 'batal') { cancelled[o.id] = 1; } });
+    pays = pays.filter(function (x) { return !cancelled[x.order_id]; });
+    var daily = {}, methods = {}, income = 0;
+    pays.forEach(function (x) {
+      income += x.amount; var d = x.date.slice(0, 10); daily[d] = (daily[d] || 0) + x.amount;
+      var m = methods[x.method] || (methods[x.method] = { method: x.method, tx: 0, sales: 0 }); m.tx += 1; m.sales += x.amount;
+    });
+    var svc = {}, ids = {}; inRange.forEach(function (o) { ids[o.id] = 1; });
+    db.all('OrderItems').forEach(function (i) {
+      if (!ids[i.order_id]) { return; }
+      var e = svc[i.name] || (svc[i.name] = { name: i.name, unit: i.unit, qty: 0, sales: 0, orders: 0 });
+      e.qty += i.qty; e.sales += i.subtotal; e.orders += 1;
+    });
+    var active = orders.filter(function (o) { return ORDER_ACTIVE.indexOf(o.status) >= 0; });
+    var receivable = 0, receivableCount = 0;
+    orders.forEach(function (o) { if (o.status !== 'batal' && o.paid < o.total) { receivable += o.total - o.paid; receivableCount++; } });
+    return {
+      income: income, orders: inRange.length, kg: Math.round(inRange.reduce(function (a, o) { return a + o.kg; }, 0) * 100) / 100,
+      billed: inRange.reduce(function (a, o) { return a + o.total; }, 0),
+      active: active.length, ready: active.filter(function (o) { return o.status === 'siap'; }).length,
+      overdue: active.filter(function (o) { return o.status !== 'siap' && o.due_at < nowS; }).length,
+      receivable: receivable, receivable_count: receivableCount,
+      daily: daily, methods: Object.keys(methods).map(function (k) { return methods[k]; }),
+      services: Object.keys(svc).map(function (k) { svc[k].qty = Math.round(svc[k].qty * 100) / 100; return svc[k]; }).sort(function (a, b) { return b.sales - a.sales; })
+    };
+  }
+
+  /* ================================================================
+     PINTU MASUK
+     ================================================================ */
+  function handle(action, token, payload) {
+    try {
+      var a = A[action];
+      if (!a) { fail('Aksi tidak dikenal.', 'NOACTION'); }
+      var run = function () {
+        var user = null;
+        if (a.auth !== false) { user = authUser(token, a.roles); }
+        return a.run(payload || {}, user);
+      };
+      var data = a.write ? P.lock(run) : run();
+      return { ok: true, data: data };
+    } catch (e) {
+      if (e && e.isApp) { return { ok: false, error: e.message, code: e.code }; }
+      if (P.log) { P.log(e); }
+      return { ok: false, error: 'Terjadi kesalahan pada server: ' + (e && e.message ? e.message : e), code: 'SERVER' };
+    }
+  }
+
+  /* ---------- data awal ---------- */
+  function seedBase() {
+    if (db.all('Users').length === 0) {
+      var salt = newSalt();
+      db.insert('Users', { username: 'admin', salt: salt, pass_hash: hashPw(salt, 'admin123'), full_name: 'Administrator', role: 'admin', active: true, last_login: '', created_at: fmtDateTime_(P.now()) });
+    }
+    var kv = db.kv(), set = {};
+    Object.keys(SETTING_DEFAULTS).forEach(function (k) { if (kv[k] === undefined) { set[k] = SETTING_DEFAULTS[k]; } });
+    if (Object.keys(set).length) { db.kvWrite(set, []); }
+    // daftar layanan laundry awal (bisa diubah/dihapus di menu Layanan)
+    if (db.all('LaundryServices').length === 0 && !db.kv().layanan_seeded) {
+      var nowS = fmtDateTime_(P.now());
+      [['Cuci Kering Lipat', 'kg', 6000, 48], ['Cuci Setrika', 'kg', 8000, 48], ['Setrika Saja', 'kg', 5000, 24], ['Kilat Cuci Setrika (6 jam)', 'kg', 15000, 6],
+       ['Bed Cover', 'pcs', 25000, 72], ['Selimut', 'pcs', 20000, 72], ['Jas / Blazer', 'pcs', 20000, 72], ['Cuci Sepatu', 'pasang', 30000, 72]
+      ].forEach(function (r, i) { db.insert('LaundryServices', { name: r[0], unit: r[1], price: r[2], duration_hours: r[3], active: true, sort: i + 1, created_at: nowS }); });
+      db.kvWrite({ layanan_seeded: '1' }, []);
+    }
+  }
+
+  return {
+    handle: handle, seedBase: seedBase,
+    util: { computeTotals: computeTotals, invoiceNo: invoiceNo, hashPw: hashPw, newSalt: newSalt, fmtDate: fmtDate_, fmtDateTime: fmtDateTime_, addDays: addDays_, loadSettings: loadSettings, wib: wib_ }
+  };
+}
+
+/* CuciAja - Demo.js: platform "memori" (dipakai demo di browser & pengujian). Bukan bagian dari versi Google Apps Script. */
+
+function sha256Hex_(msg) {
+  var utf8 = unescape(encodeURIComponent(msg));
+  var K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  var bytes = [], i, j;
+  for (i = 0; i < utf8.length; i++) { bytes.push(utf8.charCodeAt(i)); }
+  var bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) { bytes.push(0); }
+  var hi = Math.floor(bitLen / 4294967296), lo = bitLen >>> 0;
+  bytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255, (lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
+  var w = new Array(64);
+  function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+  for (var off = 0; off < bytes.length; off += 64) {
+    for (i = 0; i < 16; i++) { j = off + i * 4; w[i] = (bytes[j] << 24) | (bytes[j + 1] << 16) | (bytes[j + 2] << 8) | bytes[j + 3]; }
+    for (i = 16; i < 64; i++) {
+      var s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      var s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+    }
+    var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (i = 0; i < 64; i++) {
+      var S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25), ch = (e & f) ^ (~e & g);
+      var t1 = (h + S1 + ch + K[i] + w[i]) | 0;
+      var S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22), maj = (a & b) ^ (a & c) ^ (b & c);
+      var t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+    H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+  }
+  return H.map(function (x) { return ('00000000' + (x >>> 0).toString(16)).slice(-8); }).join('');
+}
+
+function memoryDb_(state, onChange) {
+  function coerce(t, o) {
+    var out = {};
+    SCHEMA[t].forEach(function (c) {
+      var v = o[c[0]];
+      if (c[1] === 'n') { v = (v === '' || v === null || v === undefined) ? 0 : (Number(v) || 0); }
+      else if (c[1] === 'b') { v = (v === true || v === 1 || v === '1'); }
+      else { v = (v === null || v === undefined) ? '' : String(v); }
+      out[c[0]] = v;
+    });
+    return out;
+  }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  return {
+    all: function (t) { return state.tables[t].map(clone); },
+    insert: function (t, o) {
+      var rows = state.tables[t], id = 0;
+      rows.forEach(function (r) { if (r.id > id) { id = r.id; } });
+      var row = coerce(t, Object.assign({}, o, { id: id + 1 }));
+      rows.push(row); onChange(); return clone(row);
+    },
+    insertMany: function (t, arr) {
+      var rows = state.tables[t], id = 0, out = [];
+      rows.forEach(function (r) { if (r.id > id) { id = r.id; } });
+      arr.forEach(function (o) { var row = coerce(t, Object.assign({}, o, { id: ++id })); rows.push(row); out.push(clone(row)); });
+      onChange(); return out;
+    },
+    update: function (t, id, patch) {
+      var row = state.tables[t].filter(function (r) { return r.id === id; })[0];
+      if (!row) { return null; }
+      var merged = coerce(t, Object.assign({}, row, patch, { id: id }));
+      Object.keys(merged).forEach(function (k) { row[k] = merged[k]; });
+      onChange(); return clone(row);
+    },
+    removeMany: function (t, ids) {
+      var before = state.tables[t].length;
+      state.tables[t] = state.tables[t].filter(function (r) { return ids.indexOf(r.id) < 0; });
+      onChange(); return before - state.tables[t].length;
+    },
+    kv: function () { return clone(state.kv); },
+    kvWrite: function (set, del) {
+      Object.keys(set).forEach(function (k) { state.kv[k] = String(set[k]); });
+      (del || []).forEach(function (k) { delete state.kv[k]; });
+      onChange();
+    }
+  };
+}
+
+/* storage: { get():string|null, set(str), clear() } */
+function createDemoBackend(storage, logoDataUrl) {
+  var state = null, timer = null;
+  function save() { if (timer) { return; } timer = setTimeout(function () { timer = null; try { storage.set(JSON.stringify(state)); } catch (e) {} }, 150); }
+  function emptyState() {
+    var t = {}; Object.keys(SCHEMA).forEach(function (k) { if (k !== 'Settings') { t[k] = []; } });
+    return { v: 1, secret: sha256Hex_('demo' + Math.random() + Date.now()), tables: t, kv: {} };
+  }
+  var cache = {};
+  var platform = {
+    db: null,
+    sha256: sha256Hex_,
+    now: function () { return new Date(); },
+    lock: function (fn) { return fn(); },
+    secret: function () { return state.secret; },
+    cacheGet: function (k) { var e = cache[k]; return (e && e.exp > Date.now()) ? e.v : null; },
+    cachePut: function (k, v, sec) { cache[k] = { v: v, exp: Date.now() + sec * 1000 }; }
+  };
+  var backend;
+
+  function build(fresh) {
+    state = null;
+    if (!fresh) { try { var raw = storage.get(); if (raw) { var s = JSON.parse(raw); if (s && s.v === 1) { state = s; } } } catch (e) {} }
+    var seeded = false;
+    if (!state) { state = emptyState(); seeded = true; }
+    platform.db = memoryDb_(state, save);
+    backend = createBackend_(platform);
+    if (seeded) { seedDemo_(backend, platform, logoDataUrl); }
+    return backend;
+  }
+  build(false);
+  return {
+    handle: function (action, token, payload) { return backend.handle(action, token, payload); },
+    reset: function () { try { storage.clear(); } catch (e) {} build(true); save(); }
+  };
+}
+
+/* ---------------- data contoh demo CuciAja (fiktif) ---------------- */
+function seedDemo_(backend, P, logo) {
+  var db = P.db, U = backend.util, now = P.now();
+  function saltPw(pw) { var s = U.newSalt(); return { salt: s, pass_hash: U.hashPw(s, pw) }; }
+  var created = U.fmtDateTime(now);
+  [{ username: 'admin', full_name: 'Admin', role: 'admin', pw: 'admin123' },
+   { username: 'kasir1', full_name: 'Kasir Satu', role: 'kasir', pw: 'kasir123' },
+   { username: 'kasir2', full_name: 'Kasir Dua', role: 'kasir', pw: 'kasir123' }].forEach(function (u) {
+    var h = saltPw(u.pw);
+    db.insert('Users', { username: u.username, salt: h.salt, pass_hash: h.pass_hash, full_name: u.full_name, role: u.role, active: true, last_login: '', created_at: created });
+  });
+  backend.seedBase(); // pengaturan bawaan + daftar layanan laundry
+  db.kvWrite({ store_phone: '0800-0000-0000', store_address: 'Alamat laundry Anda' }, []);
+
+  db.insert('Categories', { name: 'Perlengkapan' });
+  var prods = [['Deterjen Cair 1 L', 18000, 25000, 30], ['Pewangi Pakaian 800 ml', 16000, 22000, 24], ['Plastik Laundry (pak)', 10000, 15000, 40],
+    ['Hanger (isi 12)', 12000, 18000, 3], ['Kantong Jaring Laundry', 8000, 12000, 15], ['Sabun Batang', 3500, 5000, 50]];
+  var pr = prods.map(function (r, i) {
+    return db.insert('Products', { type: 'barang', category: 'Perlengkapan', sku: 'PRL-00' + (i + 1), barcode: '', name: r[0], unit: 'pcs', cost_price: r[1], price: r[2], stock: r[3], min_stock: 5, track_stock: true, created_at: created });
+  });
+  var names = ['Bu Rina', 'Pak Andi', 'Mbak Sari', 'Bu Dewi', 'Pak Budi', 'Mas Tono', 'Bu Wati', 'Kak Yuni', 'Pak Agus', 'Mbak Maya', 'Kos Melati', 'Bu Lestari'];
+  var cu = names.map(function (n, i) { return db.insert('Customers', { name: n, phone: '0812-0000-' + ('00' + (i + 11)).slice(-4), email: '', address: '', created_at: created }); });
+  var svc = db.all('LaundryServices');
+
+  var seed = 20260927;
+  function rnd() { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+  function pick(a) { return a[Math.floor(rnd() * a.length)]; }
+  function at(day, minutes) { return day + ' ' + ('0' + Math.floor(minutes / 60)).slice(-2) + ':' + ('0' + (minutes % 60)).slice(-2) + ':00'; }
+  function plusHours(dt, h) { var d = new Date(Date.parse(dt.replace(' ', 'T') + '+07:00') + h * 3600000); return U.fmtDateTime(d); }
+  var today = U.fmtDate(now), nowP = U.wib(now), nowMin = nowP.h * 60 + nowP.i;
+  var users = db.all('Users'), yy = today.slice(2, 4), seq = 0;
+  var kiloan = svc.filter(function (s) { return s.unit === 'kg'; }), satuan = svc.filter(function (s) { return s.unit !== 'kg'; });
+
+  for (var d = 30; d >= 0; d--) {
+    var day = U.addDays(today, -d), n = 2 + Math.floor(rnd() * 4);
+    for (var k = 0; k < n; k++) {
+      var minutes = 7 * 60 + Math.floor(rnd() * 12 * 60);
+      if (d === 0) { if (nowMin < 7 * 60 + 30) { continue; } minutes = Math.min(minutes, nowMin - 10); }
+      var dateIn = at(day, minutes), c = pick(cu), u = pick(users);
+      var lines = [], main = rnd() < 0.08 ? kiloan[3] : pick(kiloan.slice(0, 3));
+      lines.push({ s: main, q: (4 + Math.floor(rnd() * 12)) / 2 });
+      if (rnd() < 0.3) { lines.push({ s: pick(satuan), q: 1 + Math.floor(rnd() * 2) }); }
+      var sub = 0, kg = 0, maxH = 0;
+      lines.forEach(function (l) { l.sub = Math.round(l.s.price * l.q); sub += l.sub; if (l.s.unit === 'kg') { kg += l.q; } maxH = Math.max(maxH, l.s.duration_hours); });
+      var disc = rnd() < 0.1 ? 2000 : 0, total = sub - disc, due = plusHours(dateIn, maxH);
+      var payMode = rnd(), paidNow = payMode < 0.4 ? total : payMode < 0.65 ? Math.round(total / 2 / 1000) * 1000 : 0;
+      var status, picked = '';
+      var ageH = (Date.parse(today + 'T00:00:00+07:00') - Date.parse(day + 'T00:00:00+07:00')) / 3600000 + (nowMin - minutes) / 60;
+      if (ageH > maxH + 30 && !(d >= 4 && d <= 9 && rnd() < 0.15)) { status = 'diambil'; picked = plusHours(due, 2 + Math.floor(rnd() * 40)); if (picked > U.fmtDateTime(now)) { picked = U.fmtDateTime(now); } }
+      else if (ageH > maxH) { status = 'siap'; }
+      else if (ageH > maxH * 0.5) { status = rnd() < 0.5 ? 'siap' : 'dicuci'; }
+      else if (ageH > 3) { status = 'dicuci'; }
+      else { status = 'diterima'; }
+      if (d === 1 && k === 0) { status = 'dicuci'; due = plusHours(dateIn, 12); } // contoh terlambat
+      seq++;
+      var no = 'CA' + yy + '-' + ('0000' + seq).slice(-5);
+      var summary = lines.map(function (l) { return String(l.q).replace('.', ',') + ' ' + l.s.unit + ' ' + l.s.name; }).join(', ');
+      var paid = paidNow + (status === 'diambil' ? total - paidNow : 0);
+      var o = db.insert('Orders', { order_no: no, date_in: dateIn, due_at: due, user_id: u.id, user_name: u.full_name, customer_id: c.id, customer_name: c.name, customer_phone: c.phone,
+        subtotal: sub, discount: disc, total: total, paid: paid, kg: kg, summary: summary, status: status, picked_at: picked, parfum: pick(['Lavender', 'Sakura', 'Downy', '']), note: '' });
+      lines.forEach(function (l) { db.insert('OrderItems', { order_id: o.id, service_id: l.s.id, name: l.s.name, unit: l.s.unit, qty: l.q, price: l.s.price, subtotal: l.sub }); });
+      if (paidNow > 0) { db.insert('OrderPayments', { order_id: o.id, order_no: no, date: dateIn, amount: paidNow, method: pick(['cash', 'cash', 'qris', 'transfer']), kind: paidNow >= total ? 'lunas' : 'dp', user_id: u.id, user_name: u.full_name }); }
+      if (status === 'diambil' && total - paidNow > 0) { db.insert('OrderPayments', { order_id: o.id, order_no: no, date: picked, amount: total - paidNow, method: pick(['cash', 'qris']), kind: 'pelunasan', user_id: u.id, user_name: u.full_name }); }
+      db.insert('OrderLog', { order_id: o.id, date: dateIn, status: 'diterima', user_name: u.full_name, note: '' });
+      if (status !== 'diterima') { db.insert('OrderLog', { order_id: o.id, date: plusHours(dateIn, 2), status: 'dicuci', user_name: u.full_name, note: '' }); }
+      if (status === 'siap' || status === 'diambil') { db.insert('OrderLog', { order_id: o.id, date: due < U.fmtDateTime(now) ? due : plusHours(dateIn, 3), status: 'siap', user_name: u.full_name, note: '' }); }
+      if (status === 'diambil') { db.insert('OrderLog', { order_id: o.id, date: picked, status: 'diambil', user_name: u.full_name, note: '' }); }
+    }
+    // sesekali jual perlengkapan
+    if (rnd() < 0.5 && !(d === 0 && nowMin < 9 * 60)) {
+      var p = pick(pr), q = 1 + Math.floor(rnd() * 2), date = at(day, d === 0 ? Math.min(9 * 60, nowMin - 5) : 9 * 60 + Math.floor(rnd() * 600));
+      var tx = db.insert('Transactions', { invoice_no: U.invoiceNo(yy, '200', 0), date: date, user_id: users[1].id, user_name: users[1].full_name, customer_id: 0, customer_name: '', customer_addr: '',
+        subtotal: p.price * q, discount_type: 'none', discount_value: 0, discount_amount: 0, tax_rate: 0, tax_amount: 0, grand_total: p.price * q, method: 'cash', amount_paid: p.price * q, change: 0, status: 'completed', note: '', client_ref: '', source: 'online' });
+      db.update('Transactions', tx.id, { invoice_no: U.invoiceNo(yy, '200', tx.id) });
+      db.insert('TxItems', { tx_id: tx.id, invoice_no: U.invoiceNo(yy, '200', tx.id), date: date, user_id: users[1].id, product_id: p.id, name: p.name, type: 'barang', qty: q, price: p.price, cost: p.cost_price, subtotal: p.price * q });
+    }
+  }
+  var txn = db.all('Transactions').length;
+  db.kvWrite({ order_year: yy, order_next: String(seq + 1), inv_year: yy, inv_next: String(txn + 1) }, []);
+}
+
+var mem = null, KEY = 'cuciaja_demo_v1';
+var storage = { get: function () { try { return localStorage.getItem(KEY); } catch (e) { return mem; } }, set: function (s) { try { localStorage.setItem(KEY, s); } catch (e) { mem = s; } }, clear: function () { try { localStorage.removeItem(KEY); } catch (e) { mem = null; } } };
+return createDemoBackend(storage, "");
+})();
+
+window.CUCIAJA_DEMO.offline = false;
+</script>
 <script>
 'use strict';
 /* =====================================================================
