@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo Aplikasi Kasir</title>
+<meta name="description" content="Coba langsung demo CuciAja (kasir laundry) dan Kasirku (kasir toko) di browser. Berjalan di XAMPP, hosting, atau APK Android tanpa server.">
+<meta property="og:title" content="Demo Aplikasi Kasir — CuciAja & Kasirku">
+<meta property="og:description" content="Kasir laundry dan kasir toko yang bisa berjalan offline. Coba langsung di browser.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="assets/cuciaja.png">
+<style>
+:root{
+  --bg:#f4f6f8; --surface:#fff; --ink:#132033; --muted:#5b6b7e; --line:#dde3ea;
+  --ca:#0a84c6; --ca-soft:#e3f2fb; --ks:#0e8a6f; --ks-soft:#dcf2ea; --accent:#ffb020;
+  --shadow:0 18px 40px -18px rgba(12,30,50,.35);
+  --font:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#0b1118; --surface:#131c26; --ink:#e7eef6; --muted:#98a8b9; --line:#243240; --ca-soft:#0f2b3d; --ks-soft:#10302a; --shadow:0 18px 40px -18px rgba(0,0,0,.7); }
+}
+*{ box-sizing:border-box; }
+body{ margin:0; font:16px/1.55 var(--font); color:var(--ink); background:var(--bg); }
+.wrap{ max-width:1040px; margin:0 auto; padding:48px 16px 56px; }
+header{ max-width:680px; }
+.eyebrow{ font-size:13px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--ca); }
+h1{ margin:8px 0 12px; font-size:clamp(28px,5vw,42px); line-height:1.12; letter-spacing:-.01em; text-wrap:balance; }
+.lead{ margin:0; color:var(--muted); font-size:17px; }
+.grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px; margin-top:34px; }
+.app{ display:flex; flex-direction:column; gap:14px; padding:24px; background:var(--surface); border:1px solid var(--line); border-radius:20px; box-shadow:var(--shadow); }
+.app-top{ display:flex; align-items:center; gap:14px; }
+.app-top img{ width:56px; height:56px; border-radius:14px; }
+.app h2{ margin:0; font-size:22px; } .app-top p{ margin:2px 0 0; color:var(--muted); font-size:14px; }
+.app ul{ margin:0; padding:0; list-style:none; display:grid; gap:8px; font-size:15px; }
+.app li{ display:flex; gap:10px; } .app li::before{ content:'✓'; flex:none; font-weight:800; color:var(--c); }
+.btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:50px; margin-top:auto; padding:0 20px; font-weight:700; font-size:16px; color:#fff; text-decoration:none; background:var(--c); border-radius:14px; }
+.btn:hover{ filter:brightness(1.08); } .btn:focus-visible{ outline:3px solid var(--accent); outline-offset:2px; }
+.ca{ --c:var(--ca); } .ks{ --c:var(--ks); }
+.ca .tag{ background:var(--ca-soft); color:var(--ca); } .ks .tag{ background:var(--ks-soft); color:var(--ks); }
+.tag{ align-self:flex-start; padding:3px 10px; font-size:12px; font-weight:700; border-radius:999px; }
+.login{ padding:12px 14px; font-size:14px; background:var(--bg); border-radius:12px; color:var(--muted); }
+.login code{ font-family:ui-monospace,Consolas,monospace; color:var(--ink); font-weight:600; }
+.notes{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:34px; }
+.note{ padding:16px 18px; background:var(--surface); border:1px solid var(--line); border-radius:16px; }
+.note b{ display:block; margin-bottom:4px; } .note p{ margin:0; color:var(--muted); font-size:14px; }
+footer{ margin-top:36px; color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Demo langsung di browser</div>
+    <h1>Aplikasi kasir untuk laundry dan toko, tetap jalan saat offline</h1>
+    <p class="lead">Pilih salah satu demo di bawah. Semua data contoh dibuat di browser Anda sendiri, jadi bebas dicoba: buat order, bayar, cetak nota, ubah warna tema.</p>
+  </header>
+
+  <div class="grid">
+    <section class="app ca">
+      <div class="app-top"><img src="assets/cuciaja.png" alt=""><div><h2>CuciAja</h2><p>Kasir laundry</p></div></div>
+      <span class="tag">Laundry kiloan & satuan</span>
+      <ul>
+        <li>Order baru dengan berat desimal, estimasi selesai otomatis</li>
+        <li>Status cucian: diterima, dicuci, siap diambil, diambil</li>
+        <li>Bayar nanti, DP, atau lunas, plus pengingat belum lunas</li>
+        <li>Nota 58/80 mm dan pesan WhatsApp ke pelanggan</li>
+      </ul>
+      <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
+      <a class="btn" href="cuciaja/">Coba demo CuciAja →</a>
+    </section>
+
+    <section class="app ks">
+      <div class="app-top"><img src="assets/kasirku.png" alt=""><div><h2>Kasirku</h2><p>Kasir toko</p></div></div>
+      <span class="tag">Toko & retail</span>
+      <ul>
+        <li>Scan barcode, keranjang, diskon, pajak, uang kembalian</li>
+        <li>Stok barang, peringatan stok menipis, invoice A4</li>
+        <li>Tetap berjualan saat server putus, sinkron otomatis</li>
+        <li>Dashboard penjualan, laba, dan metode pembayaran</li>
+      </ul>
+      <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
+      <a class="btn" href="kasirku/">Coba demo Kasirku →</a>
+    </section>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b>Bisa dipasang di mana saja</b><p>XAMPP di komputer toko, hosting online, atau APK Android yang berjalan tanpa server.</p></div>
+    <div class="note"><b>Coba mode offline</b><p>Di dalam demo, tekan "Simulasi: putuskan server" lalu tetap lakukan transaksi.</p></div>
+    <div class="note"><b>Mulai dari awal</b><p>Menu akun (kanan atas) → Reset data demo untuk mengembalikan data contoh.</p></div>
+  </div>
+
+  <footer>Data di demo ini fiktif dan hanya tersimpan di browser Anda.</footer>
+</div>
+</body>
+</html>
