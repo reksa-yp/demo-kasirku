@@ -44,6 +44,8 @@ h1{ margin:8px 0 12px; font-size:clamp(28px,5vw,42px); line-height:1.12; letter-
 .note{ padding:16px 18px; background:var(--surface); border:1px solid var(--line); border-radius:16px; }
 .note b{ display:block; margin-bottom:4px; } .note p{ margin:0; color:var(--muted); font-size:14px; }
 footer{ margin-top:36px; color:var(--muted); font-size:14px; }
+.apk{ display:block; text-align:center; font-size:14px; font-weight:600; color:var(--muted); text-decoration:none; padding:6px; border-radius:10px; }
+.apk:hover{ color:var(--ink); background:var(--bg); }
 </style>
 </head>
 <body>
@@ -66,6 +68,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
       </ul>
       <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
       <a class="btn" href="cuciaja/">Coba demo CuciAja →</a>
+      <a class="apk" href="https://github.com/reksa-yp/demo-kasirku/releases/latest/download/CuciAja.apk">⬇ Unduh APK Android (offline)</a>
     </section>
 
     <section class="app ks">
@@ -79,10 +82,12 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
       </ul>
       <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
       <a class="btn" href="kasirku/">Coba demo Kasirku →</a>
+      <a class="apk" href="https://github.com/reksa-yp/demo-kasirku/releases/latest/download/Kasirku.apk">⬇ Unduh APK Android (offline)</a>
     </section>
   </div>
 
   <div class="notes">
+    <div class="note"><b>APK Android offline</b><p>Unduh APK di atas, izinkan "Instal dari sumber tidak dikenal", lalu masuk dengan <code>admin</code> / <code>admin123</code>. Data tersimpan di HP, tanpa internet.</p></div>
     <div class="note"><b>Bisa dipasang di mana saja</b><p>XAMPP di komputer toko, hosting online, atau APK Android yang berjalan tanpa server.</p></div>
     <div class="note"><b>Coba mode offline</b><p>Di dalam demo, tekan "Simulasi: putuskan server" lalu tetap lakukan transaksi.</p></div>
     <div class="note"><b>Mulai dari awal</b><p>Menu akun (kanan atas) → Reset data demo untuk mengembalikan data contoh.</p></div>

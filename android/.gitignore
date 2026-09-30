@@ -1,0 +1,6 @@
+.gradle/
+build/
+app/build/
+local.properties
+# dibuat otomatis oleh prepare_assets.py dari ../kasirku dan ../cuciaja
+app/src/*/assets/
