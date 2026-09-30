@@ -2291,6 +2291,7 @@ function printDoc(html, pageCss) {
     try { ANDROID.print(doc, 'CuciAja'); } catch (e) { toast('Tidak dapat membuka layanan cetak: ' + e.message, 'err'); }
     return;
   }
+  if (PRN.mode() !== 'browser' && /class="receipt\b/.test(html)) { return printThermalHtml(html, /class="receipt w58\b/.test(html) ? 58 : 80); }
   const root = $('#printRoot');
   root.innerHTML = html;
   $('#pageStyle').textContent = '@page{' + pageCss + '}';
@@ -2356,12 +2357,344 @@ function openReceiptPreview(t) {
       '<label class="rc-paper-option"><input type="radio" name="rcPaper" value="58" ' + (paper === 58 ? 'checked' : '') + '> <span><b>58mm</b><small>Struk lebih kecil dan hemat kertas.</small></span></label>' +
       '<label class="rc-paper-option"><input type="radio" name="rcPaper" value="80" ' + (paper === 80 ? 'checked' : '') + '> <span><b>80mm</b><small>Lebih lebar, item lebih mudah dibaca.</small></span></label>' +
       '</div></div><div class="rc-note">ⓘ Pilih ukuran kertas lalu periksa preview sebelum mencetak.</div></div></div>',
-    foot: '<button class="btn" data-close2>Tutup</button><button class="btn btn-primary" id="rcPrint">Cetak Struk</button>'
+    foot: '<button class="btn" data-close2>Tutup</button><button type="button" class="btn" data-act="prnSetup" title="Atur printer struk">🖨 Printer</button><button class="btn btn-primary" id="rcPrint">Cetak Struk</button>'
   });
   m.$('[data-close2]').onclick = () => m.close();
   const draw = () => { $('#rcPreviewPaper', m.el).innerHTML = receiptHtml(t, paper); };
   $$('input[name="rcPaper"]', m.el).forEach(el => el.addEventListener('change', () => { paper = Number(el.value); S.paper = paper; store.set('cua_paper', S.paper); draw(); }));
   m.$('#rcPrint').onclick = () => printDoc(receiptHtml(t, paper), 'size:' + paper + 'mm auto;margin:0');
+  draw();
+}
+
+/* ======================================================================
+ * PRINTER THERMAL: Bluetooth langsung (Web Bluetooth) / RawBT / dialog cetak
+ * ----------------------------------------------------------------------
+ * Dialog cetak browser (window.print) di Android TIDAK bisa melihat printer
+ * thermal Bluetooth. Jadi setiap struk (<div class="receipt">) diubah menjadi
+ * perintah ESC/POS lalu dikirim:
+ *  - "bt"     : langsung ke printer lewat Web Bluetooth (Chrome/Edge, BLE)
+ *  - "rawbt"  : lewat aplikasi Android RawBT (printer Bluetooth Classic)
+ *  - "browser": perilaku lama, dialog cetak browser
+ * Invoice/laporan A4 tetap memakai dialog cetak. Pilihan disimpan per perangkat.
+ * ==================================================================== */
+const PRN_PFX = 'cua_';
+const PRN = {
+  mode() { const m = store.get(PRN_PFX + 'prn_mode'); return m === 'bt' || m === 'rawbt' ? m : 'browser'; },
+  setMode(m) { store.set(PRN_PFX + 'prn_mode', m); },
+  cols() { return Number(store.get(PRN_PFX + 'prn_cols')) || 0; },
+  logo() { return store.get(PRN_PFX + 'prn_logo') !== '0'; }
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** Printer thermal hanya paham ASCII: buang aksen & ganti simbol unicode. */
+const asciiFold = s => String(s == null ? '' : s).normalize('NFKD').replace(/[̀-ͯ]/g, '')
+  .replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-')
+  .replace(/[·•]/g, '-').replace(/…/g, '...').replace(/ /g, ' ').replace(/\t/g, ' ').replace(/[^\n\x20-\x7E]/g, '?');
+
+class EscPos {
+  constructor(paper) {
+    this.paper = paper === 58 ? 58 : 80;
+    this.cols = PRN.cols() || (this.paper === 58 ? 32 : 48);
+    this.dots = this.paper === 58 ? 384 : 576;
+    this.b = []; this.wide = 1;
+  }
+  raw(...a) { for (const x of a) { this.b.push(x & 255); } return this; }
+  txt(s) { s = asciiFold(s); for (let i = 0; i < s.length; i++) { this.b.push(s.charCodeAt(i)); } return this; }
+  ln(s) { return this.txt(s || '').raw(10); }
+  init() { return this.raw(0x1B, 0x40); }
+  center() { return this.raw(0x1B, 0x61, 1); }
+  left() { return this.raw(0x1B, 0x61, 0); }
+  bold(on) { return this.raw(0x1B, 0x45, on ? 1 : 0); }
+  size(n) { this.wide = (n >> 4) + 1; return this.raw(0x1D, 0x21, n); }
+  get w() { return Math.max(8, Math.floor(this.cols / this.wide)); }
+  wrap(s) {
+    const out = [], w = this.w;
+    asciiFold(s).split(/\r?\n/).forEach(par => {
+      let line = '';
+      par.split(/\s+/).filter(Boolean).forEach(word => {
+        while (word.length > w) { if (line) { out.push(line); line = ''; } out.push(word.slice(0, w)); word = word.slice(w); }
+        if (!word) { return; }
+        if (!line) { line = word; } else if (line.length + 1 + word.length <= w) { line += ' ' + word; } else { out.push(line); line = word; }
+      });
+      if (line) { out.push(line); }
+    });
+    return out;
+  }
+  lines(s) { this.wrap(s).forEach(l => this.ln(l)); return this; }
+  /** Teks kiri & kanan dalam satu baris (kanan rata kanan). */
+  lr(l, r) {
+    l = asciiFold(l).replace(/\s+/g, ' ').trim(); r = asciiFold(r).replace(/\s+/g, ' ').trim(); const w = this.w;
+    if (!r) { return this.lines(l); }
+    if (l.length + 1 + r.length <= w) { return this.ln(l + ' '.repeat(w - l.length - r.length) + r); }
+    this.wrap(l).forEach(x => this.ln(x));
+    (r.length > w ? this.wrap(r) : [r]).forEach(x => this.ln(' '.repeat(Math.max(0, w - x.length)) + x));
+    return this;
+  }
+  sep(ch) { return this.ln((ch || '-').repeat(this.w)); }
+  feed(n) { return this.raw(0x1B, 0x64, n); }
+  cut() { return this.raw(0x1D, 0x56, 0x42, 0x00); }
+  barcode(v) {
+    v = asciiFold(v).replace(/\s+/g, ''); if (!v) { return this; }
+    const modules = 11 * (v.length + 3) + 2 + 20;
+    const mw = Math.max(1, Math.min(3, Math.floor(this.dots / modules)));
+    const data = '{B' + v;
+    this.center().raw(0x1D, 0x68, 70, 0x1D, 0x77, mw, 0x1D, 0x48, 2, 0x1D, 0x66, 0, 0x1D, 0x6B, 73, data.length).txt(data);
+    return this.raw(10).left();
+  }
+  /** Cetak logo sebagai gambar raster hitam-putih (dithering). Gagal = dilewati. */
+  async logo(src) {
+    try {
+      const img = await loadImg(src);
+      const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+      if (!iw || !ih) { return this; }
+      let w = Math.min(Math.round(this.dots * 0.6), iw), h = Math.round(w * ih / iw);
+      const maxH = Math.round(this.dots * 0.4);
+      if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+      w = Math.max(8, w); h = Math.max(1, h);
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(img, 0, 0, w, h);
+      const d = x.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) { g[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; }
+      const bw = Math.ceil(w / 8), bits = new Uint8Array(bw * h);
+      for (let yy = 0; yy < h; yy++) {
+        for (let xx = 0; xx < w; xx++) {
+          const i = yy * w + xx, o = g[i], n = o < 128 ? 0 : 255, e = o - n;
+          if (n === 0) { bits[yy * bw + (xx >> 3)] |= 0x80 >> (xx & 7); }
+          if (xx + 1 < w) { g[i + 1] += e * 7 / 16; }
+          if (yy + 1 < h) { if (xx > 0) { g[i + w - 1] += e * 3 / 16; } g[i + w] += e * 5 / 16; if (xx + 1 < w) { g[i + w + 1] += e / 16; } }
+        }
+      }
+      this.center();
+      for (let y0 = 0; y0 < h; y0 += 64) {
+        const hh = Math.min(64, h - y0);
+        this.raw(0x1D, 0x76, 0x30, 0, bw & 255, bw >> 8, hh & 255, hh >> 8);
+        for (let i = y0 * bw; i < (y0 + hh) * bw; i++) { this.b.push(bits[i]); }
+      }
+      return this.left();
+    } catch (e) { return this; }
+  }
+  bytes() { return new Uint8Array(this.b); }
+}
+
+/** Ubah HTML struk (<div class="receipt">…) menjadi ESC/POS -- berlaku untuk semua jenis struk/nota. */
+async function escFromReceiptHtml(html, paper) {
+  const p = new EscPos(paper);
+  p.init();
+  const box = document.createElement('div'); box.innerHTML = html;
+  const root = box.querySelector('.receipt') || box;
+  const text = el => { const c = el.cloneNode(true); c.querySelectorAll('br').forEach(b => b.replaceWith('\n')); return c.textContent.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').trim(); };
+  const walk = async (el, inCenter) => {
+    for (const n of Array.from(el.children)) {
+      const cl = n.classList, tag = n.tagName.toLowerCase();
+      if (tag === 'img') { if (cl.contains('r-logo') && PRN.logo()) { await p.logo(n.getAttribute('src')); } continue; }
+      if (tag === 'hr') { p.left().sep(cl.contains('solid') ? '=' : '-'); continue; }
+      if (tag === 'svg') { p.barcode((n.getAttribute('aria-label') || '').replace(/^barcode\s*/i, '')); continue; }
+      if (cl.contains('sr-barcode-text')) { continue; }
+      if (cl.contains('r-row')) {
+        const sp = n.children, big = cl.contains('r-total');
+        p.left(); if (big) { p.bold(1).size(0x01); }
+        p.lr(text(sp[0] || n), sp[1] ? text(sp[1]) : '');
+        if (big) { p.size(0).bold(0); }
+        continue;
+      }
+      const center = inCenter || cl.contains('r-center') || cl.contains('r-no') || cl.contains('r-lunas') || n.style.textAlign === 'center';
+      if (n.querySelector('.r-row, hr, img, svg, .r-item, .r-name')) { await walk(n, center); continue; }
+      const t = text(n); if (!t) { continue; }
+      const huge = cl.contains('r-store') || cl.contains('r-no') || cl.contains('r-lunas');
+      const bold = huge || cl.contains('r-name') || /bold|[6-9]00/.test(n.style.fontWeight);
+      p[center ? 'center' : 'left']();
+      if (bold) { p.bold(1); }
+      if (huge) { p.size(0x11); }
+      p.lines(t);
+      if (huge) { p.size(0); }
+      if (bold) { p.bold(0); }
+      p.left();
+    }
+  };
+  await walk(root, false);
+  return p.feed(4).cut().bytes();
+}
+
+/* ----- koneksi Web Bluetooth (BLE) ----- */
+const BT = {
+  device: null, ch: null, chunk: 100,
+  // Layanan GATT yang umum dipakai printer thermal murah (Xprinter, Zjiang, Goojprt, Panda, EPPOS, dll).
+  SERVICES: [
+    '000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+    '0000ff00-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb', '0000fff0-0000-1000-8000-00805f9b34fb',
+    '0000ae30-0000-1000-8000-00805f9b34fb', '0000ae00-0000-1000-8000-00805f9b34fb', '0000fee7-0000-1000-8000-00805f9b34fb',
+    '0000e0ff-3c17-d293-8e48-14fe2e4da212', '0000ffb0-0000-1000-8000-00805f9b34fb'
+  ],
+  supported() { return !!(navigator.bluetooth && window.isSecureContext); },
+  name() { return (this.device && this.device.name) || store.get(PRN_PFX + 'bt_name') || ''; },
+  connected() { return !!(this.device && this.device.gatt && this.device.gatt.connected && this.ch); },
+  _bind(d) {
+    this.device = d; this.ch = null;
+    store.set(PRN_PFX + 'bt_name', d.name || 'Printer tanpa nama'); store.set(PRN_PFX + 'bt_id', d.id || '');
+    d.addEventListener('gattserverdisconnected', () => { this.ch = null; });
+  },
+  /** Harus dipanggil dari klik pengguna (aturan browser). */
+  async pick() {
+    if (!this.supported()) { throw new Error(btUnsupportedMsg()); }
+    let d;
+    try { d = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: this.SERVICES }); }
+    catch (e) {
+      if (e.name === 'NotFoundError') { throw new Error('Pemilihan printer dibatalkan, atau tidak ada perangkat Bluetooth yang terdeteksi.'); }
+      if (e.name === 'SecurityError') { throw new Error('Tekan tombol cetak / cari printer sekali lagi (browser meminta klik langsung dari Anda).'); }
+      throw e;
+    }
+    if (this.device && this.device !== d) { try { this.device.gatt.disconnect(); } catch (e) {} }
+    this._bind(d);
+    await this.connect();
+    return d;
+  },
+  /** Setelah halaman dimuat ulang, coba pakai lagi printer yang sudah diizinkan. */
+  async restore() {
+    if (this.device || !this.supported() || !navigator.bluetooth.getDevices) { return !!this.device; }
+    try {
+      const id = store.get(PRN_PFX + 'bt_id'), list = await navigator.bluetooth.getDevices();
+      const d = list.find(x => x.id === id) || (list.length === 1 ? list[0] : null);
+      if (d) { this._bind(d); return true; }
+    } catch (e) {}
+    return false;
+  },
+  async connect() {
+    if (!this.device) { throw new Error('Printer Bluetooth belum dipilih.'); }
+    if (this.connected()) { return this.ch; }
+    let server, lastErr;
+    for (let i = 0; i < 3 && !server; i++) {
+      try { server = await this.device.gatt.connect(); } catch (e) { lastErr = e; await sleep(400); }
+    }
+    if (!server) { throw new Error('Tidak bisa tersambung ke "' + this.name() + '". Pastikan printer menyala & dekat. (' + (lastErr && lastErr.message || '') + ')'); }
+    let services = [];
+    try { services = await server.getPrimaryServices(); } catch (e) {}
+    let pickCh = null;
+    for (const sv of services) {
+      let chars = [];
+      try { chars = await sv.getCharacteristics(); } catch (e) { continue; }
+      const c = chars.find(c => c.properties.writeWithoutResponse) || chars.find(c => c.properties.write);
+      if (c) { pickCh = c; break; }
+    }
+    if (!pickCh) {
+      try { this.device.gatt.disconnect(); } catch (e) {}
+      throw new Error('Perangkat "' + this.name() + '" tersambung, tapi tidak punya jalur cetak BLE yang dikenali. Kemungkinan printer ini hanya Bluetooth Classic — gunakan mode "Aplikasi RawBT".');
+    }
+    this.ch = pickCh;
+    return pickCh;
+  },
+  async _send(part) {
+    const c = this.ch;
+    if (c.properties.writeWithoutResponse && c.writeValueWithoutResponse) { await c.writeValueWithoutResponse(part); await sleep(Math.max(8, Math.round(part.length / 7))); }
+    else if (c.writeValueWithResponse) { await c.writeValueWithResponse(part); }
+    else { await c.writeValue(part); }
+  },
+  async write(bytes) {
+    await this.connect();
+    let i = 0;
+    while (i < bytes.length) {
+      const part = bytes.slice(i, i + this.chunk);
+      try { await this._send(part); i += part.length; }
+      catch (e) {
+        if (this.chunk > 20) { this.chunk = 20; continue; }                                   // MTU kecil: perkecil potongan
+        if (!this.device.gatt.connected) { this.ch = null; await this.connect(); continue; }   // putus: sambung ulang
+        throw new Error('Gagal mengirim ke printer: ' + e.message);
+      }
+    }
+  },
+  forget() { try { if (this.device) { this.device.gatt.disconnect(); } } catch (e) {} this.device = null; this.ch = null; store.del(PRN_PFX + 'bt_id'); store.del(PRN_PFX + 'bt_name'); }
+};
+function btUnsupportedMsg() {
+  if (typeof ANDROID !== 'undefined' && ANDROID) { return 'Di aplikasi Android (APK), struk dicetak lewat layanan cetak Android. Pilih mode "Dialog cetak browser", lalu pilih RawBT / printer Anda di layar cetak.'; }
+  if (!window.isSecureContext) { return 'Bluetooth hanya jalan di alamat https:// atau localhost.'; }
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) { return 'iPhone/iPad (Safari) belum mendukung Web Bluetooth. Gunakan HP Android dengan Chrome.'; }
+  if (/FBAN|FBAV|Instagram|Line\/|WhatsApp|; wv\)/.test(ua)) { return 'Halaman dibuka di browser bawaan aplikasi lain. Buka di Google Chrome (menu ⋮ → Buka di Chrome).'; }
+  if (/Firefox/.test(ua)) { return 'Firefox tidak mendukung Web Bluetooth. Gunakan Google Chrome atau Microsoft Edge.'; }
+  return 'Browser ini tidak mendukung Web Bluetooth. Gunakan Google Chrome terbaru (Android / Windows).';
+}
+
+/* ----- kirim lewat aplikasi RawBT (Android) ----- */
+function rawbtSend(bytes) {
+  if (!/Android/i.test(navigator.userAgent)) { toast('Mode RawBT hanya untuk HP/tablet Android.', 'err'); return; }
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) { bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); }
+  window.location.href = 'intent:base64,' + btoa(bin) + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
+}
+
+/** Dipanggil printDoc() untuk setiap struk thermal bila mode bukan "browser". */
+async function printThermalHtml(html, paper) {
+  const mode = PRN.mode();
+  try {
+    if (mode === 'bt') {
+      if (!BT.supported()) { throw new Error(btUnsupportedMsg()); }
+      if (!BT.device) { await BT.restore(); }
+      if (!BT.device) { await BT.pick(); }            // pilih printer selagi masih dalam klik pengguna
+    }
+    const bytes = await escFromReceiptHtml(html, paper);
+    if (mode === 'rawbt') { rawbtSend(bytes); return; }
+    toast('Mengirim ke ' + BT.name() + '…');
+    await BT.write(bytes);
+    toast('Struk terkirim ke printer.', 'ok');
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+  }
+}
+function prnModeLabel() { return { bt: 'Bluetooth langsung', rawbt: 'Aplikasi RawBT', browser: 'Dialog cetak browser' }[PRN.mode()]; }
+
+/* ----- jendela pengaturan printer (bisa dibuka kasir maupun admin) ----- */
+function openPrinterSetup() {
+  const m = openModal({
+    title: 'Printer struk', size: 'wide',
+    body: '<div class="field"><span class="field-label">Cara mencetak struk di perangkat ini</span><div class="rc-paper-options">' +
+      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="bt"> <span><b>Printer Bluetooth langsung</b><small>Chrome Android / Windows. Untuk printer thermal Bluetooth (BLE), tanpa aplikasi tambahan.</small></span></label>' +
+      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="rawbt"> <span><b>Lewat aplikasi RawBT (Android)</b><small>Untuk printer yang hanya Bluetooth Classic dan tidak muncul di mode di atas.</small></span></label>' +
+      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="browser"> <span><b>Dialog cetak browser</b><small>Printer USB/Wi-Fi yang terpasang di komputer. Printer Bluetooth tidak muncul di sini.</small></span></label>' +
+      '</div></div><div id="prnDetail"></div>' +
+      '<div class="grid2" style="margin-top:12px"><label class="field"><span>Ukuran kertas</span><select id="prnPaper"><option value="58">58 mm</option><option value="80">80 mm</option></select></label>' +
+      '<label class="field"><span>Karakter per baris</span><select id="prnCols"><option value="0">Otomatis (58mm = 32, 80mm = 48)</option><option value="32">32</option><option value="42">42</option><option value="48">48</option></select><small>Ubah bila baris struk terpotong / terlalu sempit.</small></label></div>' +
+      '<label class="check" style="display:flex;margin-top:4px"><input type="checkbox" id="prnLogo"> Cetak logo (bila "Tampilkan logo di struk" aktif)</label>',
+    foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn btn-primary" id="prnTest">Tes cetak</button>'
+  });
+  m.$('[data-close2]').onclick = () => m.close();
+  const q = s => $(s, m.el);
+  q('input[name="prnMode"][value="' + PRN.mode() + '"]').checked = true;
+  q('#prnPaper').value = String(S.paper); q('#prnCols').value = String(PRN.cols()); q('#prnLogo').checked = PRN.logo();
+  const tips = '<details style="margin-top:10px"><summary><b>Printer tidak muncul?</b></summary><ul class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">' +
+    '<li>Nyalakan Bluetooth <b>dan Lokasi</b> di HP, lalu izinkan Chrome mengakses "Perangkat sekitar" (Setelan → Aplikasi → Chrome → Izin).</li>' +
+    '<li>Buka di <b>Google Chrome</b>, bukan browser bawaan WhatsApp/Facebook.</li>' +
+    '<li>Printer yang sedang tersambung ke HP/aplikasi lain tidak akan terlihat — putuskan dulu dari aplikasi tersebut.</li>' +
+    '<li>Jika sudah di-<i>pairing</i> di Setelan Bluetooth Android tapi tetap tidak muncul, printer itu kemungkinan hanya Bluetooth Classic → pakai mode <b>RawBT</b>.</li>' +
+    '<li>iPhone/iPad belum bisa memakai Web Bluetooth.</li></ul></details>';
+  const draw = () => {
+    const mode = q('input[name="prnMode"]:checked').value, box = q('#prnDetail');
+    if (mode === 'bt') {
+      if (!BT.supported()) { box.innerHTML = '<p class="page-note" style="margin:0">⚠ ' + esc(btUnsupportedMsg()) + '</p>' + tips; return; }
+      const nm = BT.name();
+      box.innerHTML = '<p class="page-note" style="margin:0">' + (BT.connected() ? '✓ Tersambung ke <b>' + esc(nm) + '</b>' : nm ? 'Printer terakhir: <b>' + esc(nm) + '</b> (disambungkan otomatis saat mencetak)' : 'Belum ada printer dipilih.') + '</p>' +
+        '<div class="actions" style="margin-top:10px"><button type="button" class="btn btn-primary" id="prnPick">' + (nm ? 'Ganti printer' : 'Cari &amp; sambungkan printer') + '</button>' +
+        (nm ? '<button type="button" class="btn btn-danger" id="prnForget">Lupakan printer</button>' : '') + '</div>' + tips;
+      q('#prnPick').onclick = e => run(e.currentTarget, async () => { await BT.pick(); toast('Tersambung ke ' + BT.name() + '.', 'ok'); draw(); });
+      if (q('#prnForget')) { q('#prnForget').onclick = () => { BT.forget(); draw(); }; }
+    } else if (mode === 'rawbt') {
+      box.innerHTML = '<div class="page-note" style="margin:0"><b>Langkah sekali saja:</b><ol style="margin:6px 0 0;padding-left:20px;line-height:1.55">' +
+        '<li>Pasang aplikasi <b>RawBT</b> dari Play Store.</li><li>Pairing printer di Setelan → Bluetooth Android (PIN biasanya 0000 atau 1234).</li>' +
+        '<li>Buka RawBT → Settings → pilih printer Bluetooth Anda → tes dari RawBT.</li><li>Kembali ke sini, tekan <b>Tes cetak</b>.</li></ol></div>';
+    } else {
+      box.innerHTML = '<p class="page-note" style="margin:0">Struk dikirim ke dialog cetak browser seperti sebelumnya. Printer Bluetooth thermal <b>tidak</b> muncul di daftar itu — pilih salah satu mode di atas untuk printer Bluetooth.</p>';
+    }
+  };
+  $$('input[name="prnMode"]', m.el).forEach(r => r.addEventListener('change', () => { PRN.setMode(r.value); draw(); }));
+  q('#prnPaper').onchange = e => { S.paper = Number(e.target.value) === 58 ? 58 : 80; store.set(PRN_PFX + 'paper', S.paper); };
+  q('#prnCols').onchange = e => { const v = Number(e.target.value) || 0; if (v) { store.set(PRN_PFX + 'prn_cols', v); } else { store.del(PRN_PFX + 'prn_cols'); } };
+  q('#prnLogo').onchange = e => store.set(PRN_PFX + 'prn_logo', e.target.checked ? '1' : '0');
+  q('#prnTest').onclick = () => {
+    const s = ST(), w = S.paper;
+    const html = '<div class="receipt ' + (w === 58 ? 'w58' : 'w80') + '"><div class="r-center r-store">TES PRINTER</div><div class="r-center">' + esc(s.store_name || '') + '</div><hr class="r-sep">' +
+      '<div class="r-row"><span>Kertas</span><span>' + w + ' mm</span></div><div class="r-row"><span>Waktu</span><span>' + esc(new Date().toLocaleString('id-ID')) + '</span></div><hr class="r-sep">' +
+      '<div>ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789</div><div class="r-row r-total"><span>TOTAL</span><span>Rp 1.250.000</span></div><hr class="r-sep">' +
+      '<div class="r-center">Jika baris di atas rapi dan tidak terpotong, printer siap dipakai.</div></div>';
+    const r = printDoc(html, 'size:' + w + 'mm auto;margin:0');
+    Promise.resolve(r).then(() => setTimeout(draw, 300));
+  };
   draw();
 }
 
@@ -2476,6 +2809,7 @@ async function showInvoice(id) {
    KERANGKA: login, navigasi, menu akun
    ===================================================================== */
 const ACT = {}, CHG = {}, INP = {}, VIEWS = {};
+ACT.prnSetup = () => openPrinterSetup();
 document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) { ACT[t.dataset.act](t, e); } });
 document.addEventListener('change', e => { const t = e.target.closest('[data-chg]'); if (t && CHG[t.dataset.chg]) { CHG[t.dataset.chg](t, e); } });
 document.addEventListener('input', e => { const t = e.target.closest('[data-inp]'); if (t && INP[t.dataset.inp]) { INP[t.dataset.inp](t, e); } });
@@ -2970,7 +3304,7 @@ function showDone(tx) {
       (inv ? '<p class="note-inv" style="margin:0 0 12px">Transaksi ini memenuhi syarat invoice (pelanggan terdaftar, ' + esc(PAY[tx.method]).toLowerCase() + ').</p>' : '') +
       '<div class="actions" style="margin-bottom:10px"><span class="muted">Struk:</span><div class="seg" role="group" aria-label="Lebar kertas struk"><button type="button" data-w="80" aria-pressed="' + (S.paper === 80) + '">80 mm</button><button type="button" data-w="58" aria-pressed="' + (S.paper === 58) + '">58 mm</button></div></div>' +
       '<div class="receipt-wrap" id="rw"></div>',
-    foot: '<button type="button" class="btn" id="prRc">Cetak struk</button>' + (inv ? '<button type="button" class="btn btn-primary" id="prInv">Invoice / PDF</button>' : '') + '<button type="button" class="btn btn-pay" id="newTx">Transaksi baru</button>',
+    foot: '<button type="button" class="btn" data-act="prnSetup" title="Atur printer struk">🖨 Printer</button><button type="button" class="btn" id="prRc">Cetak struk</button>' + (inv ? '<button type="button" class="btn btn-primary" id="prInv">Invoice / PDF</button>' : '') + '<button type="button" class="btn btn-pay" id="newTx">Transaksi baru</button>',
     onClose() { const s = $('#scan'); if (s && window.matchMedia('(min-width:901px)').matches) { s.focus(); } }
   });
   const draw = () => { m.$('#rw').innerHTML = '<div class="paper" style="width:fit-content">' + receiptHtml(tx, S.paper) + '</div>'; };
@@ -3425,7 +3759,8 @@ function viewPengaturan() {
       '<label class="field"><span>Kertas struk bawaan</span><select id="sPaper"><option value="80">80 mm</option><option value="58">58 mm</option></select></label><div></div></div>' +
       '<label class="field"><span>Teks kaki struk</span><input id="sFoot" type="text" maxlength="250" value="' + esc(s.receipt_footer) + '"></label>' +
       '<label class="check" style="display:flex;margin-bottom:10px"><input type="checkbox" id="sLogoRc"' + (s.show_logo_on_receipt ? ' checked' : '') + '> Tampilkan logo di struk</label>' +
-      '<label class="check" style="display:flex"><input type="checkbox" id="sAuto"' + (s.auto_print ? ' checked' : '') + '> Cetak struk otomatis setelah bayar (transaksi tanpa invoice)</label></div></div>' +
+      '<label class="check" style="display:flex"><input type="checkbox" id="sAuto"' + (s.auto_print ? ' checked' : '') + '> Cetak struk otomatis setelah bayar (transaksi tanpa invoice)</label>' +
+      '<div class="actions" style="margin-top:14px"><button type="button" class="btn" data-act="prnSetup">🖨 Atur printer (Bluetooth / RawBT)</button><span class="muted">Perangkat ini: ' + prnModeLabel() + '</span></div></div></div>' +
     '<p class="page-note">' + (IS_LOCAL ? 'Aplikasi ini berjalan tanpa server: semua data tersimpan di HP ini. Lakukan <b>Backup data</b> secara rutin.' : IS_DEMO ? 'Mode demo: data hanya tersimpan di browser ini.' : 'Data usaha tersimpan di database MySQL <b>cuciaja</b> pada server XAMPP / hosting Anda. Backup rutin lewat phpMyAdmin → Export.') + '</p></div></div>';
   $('#sPaper').value = String(s.paper_width);
   drawLogo(); drawQris(); invPreview(); bindTheme();
@@ -3838,7 +4173,7 @@ function showOrderDone(o, change) {
       (change > 0 ? '<div class="done-change"><span>Kembalian</span><strong>' + rp(change) + '</strong></div>' : '') +
       '<div class="actions" style="margin-bottom:10px"><span class="muted">Nota:</span><div class="seg" role="group" aria-label="Lebar kertas"><button type="button" data-w="80" aria-pressed="' + (S.paper === 80) + '">80 mm</button><button type="button" data-w="58" aria-pressed="' + (S.paper === 58) + '">58 mm</button></div></div>' +
       '<div class="receipt-wrap" id="odRc"></div>',
-    foot: '<button type="button" class="btn" id="odWa">Kirim WA</button><button type="button" class="btn" id="odPrint">Cetak nota</button><button type="button" class="btn btn-pay" id="odNew">Order baru</button>'
+    foot: '<button type="button" class="btn" id="odWa">Kirim WA</button><button type="button" class="btn" data-act="prnSetup" title="Atur printer struk">🖨 Printer</button><button type="button" class="btn" id="odPrint">Cetak nota</button><button type="button" class="btn btn-pay" id="odNew">Order baru</button>'
   });
   const draw = () => { m.$('#odRc').innerHTML = '<div class="paper" style="width:fit-content">' + laundryReceiptHtml(o, S.paper) + '</div>'; };
   draw();
@@ -3923,7 +4258,7 @@ async function orderDetail(id) {
       '<h3 class="od-h">Riwayat status</h3><ol class="od-log">' + o.log.map(l => '<li><b>' + esc(OST[l.status] || l.status) + '</b> <span class="muted">' + dmyhm(l.date) + ' · ' + esc(l.user_name) + (l.note ? ' · ' + esc(l.note) : '') + '</span></li>').join('') + '</ol>' +
       (active ? '<div class="od-status"><label class="field" style="margin:0;flex:1"><span>Ubah status</span><select id="odSt">' + O_ACTIVE.map(s => '<option value="' + s + '"' + (s === o.status ? ' selected' : '') + '>' + OST[s] + '</option>').join('') + '</select></label><button type="button" class="btn" id="odStGo">Simpan status</button></div>' : ''),
     foot: (admin && o.status !== 'diambil' && o.status !== 'batal' ? '<button type="button" class="btn btn-ghost" id="odCancel" style="color:var(--danger)">Batalkan</button><span class="grow"></span>' : '') +
-      '<button type="button" class="btn" id="odPrint">Cetak nota</button>' + (o.customer_phone && o.status !== 'batal' ? '<button type="button" class="btn" id="odWa">WhatsApp</button>' : '') +
+      '<button type="button" class="btn" data-act="prnSetup" title="Atur printer struk">🖨 Printer</button><button type="button" class="btn" id="odPrint">Cetak nota</button>' + (o.customer_phone && o.status !== 'batal' ? '<button type="button" class="btn" id="odWa">WhatsApp</button>' : '') +
       (o.remaining > 0 && o.status !== 'batal' ? '<button type="button" class="btn btn-primary" id="odPay">Terima bayar</button>' : '') +
       (active ? '<button type="button" class="btn btn-pay" id="odPick">Serahkan</button>' : '')
   });
