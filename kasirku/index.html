@@ -1454,7 +1454,7 @@ function memoryDb_(state, onChange) {
 }
 
 /* storage: { get():string|null, set(str), clear() } */
-function createDemoBackend(storage, logoDataUrl) {
+function createDemoBackend(storage, logoDataUrl, appMode) {
   var state = null, timer = null;
   function save() { if (timer) { return; } timer = setTimeout(function () { timer = null; try { storage.set(JSON.stringify(state)); } catch (e) {} }, 150); }
   function emptyState() {
@@ -1480,14 +1480,37 @@ function createDemoBackend(storage, logoDataUrl) {
     if (!state) { state = emptyState(); seeded = true; }
     platform.db = memoryDb_(state, save);
     backend = createBackend_(platform);
-    if (seeded) { seedDemo_(backend, platform, logoDataUrl); }
+    if (seeded) { if (appMode) { seedApp_(backend, platform); } else { seedDemo_(backend, platform, logoDataUrl); } }
     return backend;
   }
   build(false);
   return {
     handle: function (action, token, payload) { return backend.handle(action, token, payload); },
-    reset: function () { try { storage.clear(); } catch (e) {} build(true); save(); }
+    reset: function () { try { storage.clear(); } catch (e) {} build(true); save(); },
+    /* --- dipakai aplikasi Android (mode aplikasi, data milik toko) --- */
+    flush: function () { if (timer) { clearTimeout(timer); timer = null; } try { storage.set(JSON.stringify(state)); } catch (e) { if (window.ksrStorageError) { window.ksrStorageError(e); } } },
+    stats: function () { var t = state.tables; return { transactions: (t.Transactions || []).length, products: (t.Products || []).length, customers: (t.Customers || []).length }; },
+    exportData: function () { var o = JSON.parse(JSON.stringify(state)); o.app = 'kasirku'; o.product = 'PinaPos'; o.exported_at = new Date().toISOString(); return o; },
+    restoreData: function (b) {
+      if (!b || b.app !== 'kasirku' || !b.tables || !b.tables.Users || !b.tables.Users.length) { throw new Error('File backup tidak lengkap.'); }
+      var s = JSON.parse(JSON.stringify(b)); delete s.app; delete s.product; delete s.exported_at;
+      s.v = 1; if (!s.secret) { s.secret = state.secret; } if (!s.kv) { s.kv = {}; }
+      try { storage.set(JSON.stringify(s)); } catch (e) { throw new Error('Data gagal disimpan ke HP: ' + e.message); }
+      build(false);
+    }
   };
+}
+
+/* ---------------- data awal mode aplikasi: kosong, hanya akun admin ---------------- */
+function seedApp_(backend, P) {
+  var db = P.db, U = backend.util, created = U.fmtDateTime(P.now()), salt = U.newSalt();
+  db.insert('Users', { username: 'admin', salt: salt, pass_hash: U.hashPw(salt, 'admin123'), full_name: 'Admin', role: 'admin', active: true, last_login: '', created_at: created });
+  db.kvWrite({
+    store_name: 'Toko Saya', store_address: '', store_phone: '', store_email: '', tax_no: '',
+    bank_name: '', bank_account: '', bank_holder: '',
+    tax_rate: '0', paper_width: '58', receipt_footer: 'Terima kasih atas kunjungan Anda.', show_logo_on_receipt: '1', auto_print: '0', inv_code: '200'
+  }, []);
+  db.insert('Categories', { name: 'Umum' });
 }
 
 /* ---------------- data contoh (perusahaan dari invoice contoh) ---------------- */
@@ -1610,12 +1633,28 @@ function seedDemo_(backend, P, logo) {
   db.kvWrite({ inv_year: yyNow, inv_next: String((counters[yyNow] || 0) + 1) }, []);
 }
 
-var mem = null, KEY = 'pinapos_demo_v1';
+/* ?app=1 : mode aplikasi (APK Android) — data kosong milik toko, tanpa data contoh. */
+var APP_MODE = /[?&]app=1(?:&|$)/.test(location.search);
+var mem = null, KEY = APP_MODE ? 'pinapos_app_v1' : 'pinapos_demo_v1';
 var storage = { get: function () { try { return localStorage.getItem(KEY); } catch (e) { return mem; } }, set: function (s) { try { localStorage.setItem(KEY, s); } catch (e) { mem = s; } }, clear: function () { try { localStorage.removeItem(KEY); } catch (e) { mem = null; } } };
-return createDemoBackend(storage, "");
+var be = createDemoBackend(storage, "", APP_MODE);
+if (APP_MODE) {
+  window.KASIRKU_LOCAL = {
+    ready: Promise.resolve(),
+    handle: be.handle,
+    flush: be.flush,
+    stats: be.stats,
+    exportData: be.exportData,
+    restoreData: function (b) { return new Promise(function (res) { be.restoreData(b); res(); }); }
+  };
+  window.addEventListener('pagehide', be.flush);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') { be.flush(); } });
+  return undefined;
+}
+return be;
 })();
 
-window.KASIRKU_DEMO.offline = false;
+if (window.KASIRKU_DEMO) { window.KASIRKU_DEMO.offline = false; }
 </script>
 <script>
 'use strict';
@@ -3067,7 +3106,7 @@ function rangeBar(scope) {
 }
 const periodTxt = r => r.from === r.to ? dmy(r.from) : dmy(r.from) + ' – ' + dmy(r.to);
 const shortRp = v => v >= 1e9 ? (v / 1e9).toFixed(1).replace('.', ',') + ' M' : v >= 1e6 ? (v / 1e6).toFixed(v % 1e6 ? 1 : 0).replace('.', ',') + ' jt' : v >= 1e3 ? Math.round(v / 1e3) + ' rb' : String(Math.round(v));
-function niceMax(v) { if (v <= 0) { return 1; } const p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
+function niceMax(v) { if (v <= 0) { return 100000; } const p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
 function barChart(data, h) {
   h = h || 210; const vw = $('#view') ? $('#view').clientWidth : 720, W = Math.max(280, Math.min(760, vw - 60)), L = 50, B = 26, T = 10, R = 6, pw = W - L - R, ph = h - B - T;
   const max = niceMax(Math.max.apply(null, data.map(d => d.sales).concat([0])));

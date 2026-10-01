@@ -116,7 +116,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {
-            web.loadUrl(BASE + "index.html");
+            web.loadUrl(BASE + "index.html?app=1");   // mode aplikasi: data kosong milik toko
         }
     }
 
@@ -137,11 +137,18 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) {
-            web.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        // Biarkan aplikasi menutup menu/dialog lebih dulu; bila tidak ada, keluar.
+        web.evaluateJavascript("window.ksrBack ? !!window.ksrBack() : false", result -> {
+            if (!"true".equals(result)) {
+                finish();
+            }
+        });
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        web.evaluateJavascript("window.ksrFlush && window.ksrFlush()", null);
     }
 
     private void openExternal(String url) {
