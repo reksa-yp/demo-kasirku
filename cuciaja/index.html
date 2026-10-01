@@ -1,7 +1,10 @@
 <!DOCTYPE html>
+<!-- CuciAja — Copyright (c) 2026 ASKER. All rights reserved. Powered by ASKER. -->
 <html lang="id">
 <head>
 <meta charset="utf-8">
+<meta name="author" content="ASKER">
+<meta name="copyright" content="© 2026 ASKER">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -282,12 +285,15 @@ table.t{ width:100%; border-collapse:collapse; font-size:14px; }
 .inv-scale{ overflow:auto; padding:12px; background:#8b93a1; border-radius:8px; max-height:64vh; }
 .inv-scale > div{ transform-origin:top left; } .inv-scale{ overflow-x:hidden; }
 
+.side-foot{ margin:22px 12px 0; padding-top:12px; border-top:1px solid var(--line); font-size:12px; line-height:1.5; color:var(--muted); }
+.login-copy{ margin:18px 0 0; font-size:12px; color:var(--muted); text-align:center; }
 /* ---------- KERTAS CETAK (struk, invoice, laporan) ---------- */
 .paper{ margin:0 auto; color:#000; background:#fff; padding:10px 8px; box-shadow:0 1px 6px rgba(0,0,0,.25); }
 .receipt{ margin:0 auto; color:#000; background:#fff; font-family:"Courier New",Courier,ui-monospace,monospace; font-size:12px; line-height:1.35; padding:3mm 3.5mm; box-sizing:border-box; }
 .receipt.w80{ width:72mm; } .receipt.w58{ width:48mm; font-size:11px; }
 .receipt .r-center{ text-align:center; } .receipt .r-store{ font-size:1.25em; font-weight:700; }
 .receipt .r-logo{ display:block; max-width:60%; max-height:18mm; margin:0 auto 4px; object-fit:contain; filter:grayscale(1) contrast(1.5); }
+.receipt .r-powered{ margin-top:6px; font-size:.85em; }
 .receipt .r-sep{ margin:6px 0; border:0; border-top:1px dashed #000; } .receipt .r-sep.solid{ border-top-style:solid; }
 .receipt .r-row{ display:flex; justify-content:space-between; gap:8px; } .receipt .r-row > span:last-child{ text-align:right; white-space:nowrap; }
 .receipt .r-name{ font-weight:700; overflow-wrap:anywhere; } .receipt .r-item{ margin-bottom:3px; } .receipt .r-total{ font-size:1.2em; font-weight:700; } .receipt .pre{ white-space:pre-line; }
@@ -2345,7 +2351,7 @@ function receiptHtml(t, width) {
   h += '<hr class="r-sep solid">' + row('TOTAL', int(t.grand_total), 'r-total') + '<hr class="r-sep">' +
     row('Bayar (' + esc(PAY[t.method] || t.method) + ')', int(t.amount_paid));
   if (t.method === 'cash') { h += row('Kembali', int(t.change)); }
-  return h + '<hr class="r-sep"><div class="r-center">' + esc(s.receipt_footer) + '</div></div>';
+  return h + '<hr class="r-sep"><div class="r-center">' + esc(s.receipt_footer) + '</div><div class="r-center r-powered">Powered by ASKER</div></div>';
 }
 function printReceipt(t) { printDoc(receiptHtml(t, S.paper), 'size:' + S.paper + 'mm auto;margin:0'); }
 /** Pilih ukuran kertas (58mm/80mm) dengan preview dahulu sebelum struk dicetak. */
@@ -2784,7 +2790,7 @@ function invoiceHtml(t) {
     (t.method === 'cash' && t.change > 0 ? '<div class="row"><span>Change:</span><span>' + rpi(t.change) + '</span></div>' : '') +
     '<div class="row b"><span>Amount due:</span><span>' + rpi(Math.max(0, t.grand_total - paid)) + '</span></div></div>' +
     '<div class="inv-sign"><div>Hormat kami,</div><div class="sp"></div><div class="nm">' + esc(t.cashier) + '</div></div></div>' +
-    '<div class="inv-foot"><span>Created with CuciAja</span><span>' + (lines.length <= 9 ? 'Page 1' : '') + '</span></div></div>';
+    '<div class="inv-foot"><span>Created with CuciAja · Powered by ASKER</span><span>' + (lines.length <= 9 ? 'Page 1' : '') + '</span></div></div>';
 }
 async function showInvoice(id) {
   const t = await api('invoiceGet', { id });
@@ -2877,7 +2883,7 @@ function showLogin(msg) {
     '<label class="field"><span>Password</span><input id="lp" type="password" autocomplete="current-password"></label>' +
     '<button type="button" class="btn btn-primary" id="lgo" style="width:100%;min-height:46px">Masuk</button>' +
     (IS_LOCAL && !store.get('cua_used') ? '<div class="hint">Pertama kali memakai? Masuk dengan username <b>admin</b> dan password <b>admin123</b>, lalu segera ganti password.</div>' : '') +
-    (IS_DEMO ? '<div class="hint">Akun demo — klik untuk mengisi:<br><button type="button" data-u="admin" data-p="admin123">Kasir Admin · admin</button><button type="button" data-u="kasir1" data-p="kasir123">Kasir · kasir1</button><button type="button" data-u="kasir2" data-p="kasir123">Kasir · kasir2</button></div>' : '') + '</div></div>';
+    (IS_DEMO ? '<div class="hint">Akun demo — klik untuk mengisi:<br><button type="button" data-u="admin" data-p="admin123">Kasir Admin · admin</button><button type="button" data-u="kasir1" data-p="kasir123">Kasir · kasir1</button><button type="button" data-u="kasir2" data-p="kasir123">Kasir · kasir2</button></div>' : '') + '<p class="login-copy">Powered by ASKER · © 2026 ASKER</p></div></div>';
   api('publicInfo').then(i => {
     const lb = $('#lb'); if (!lb) { return; }
     const draw = logo => { const b = $('#lb'); if (b) { b.innerHTML = (logo ? '<img src="' + esc(logo) + '" alt="Logo">' : '') + '<div><h1>Selamat datang</h1><p>Masuk ke ' + esc(i.store_name) + '</p></div>'; } const hn = $('#lhName'); if (hn) { hn.textContent = i.store_name; } };
@@ -2928,7 +2934,7 @@ function renderShell() {
     '<div class="who"><button type="button" class="who-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false"><span class="ava">' + esc((u.full_name || '?')[0].toUpperCase()) + '</span><span class="w"><b>' + esc(u.full_name) + '</b><small>' + ROLE[u.role] + '</small></span><span aria-hidden="true">▾</span></button>' +
     '<div class="menu" id="menu" role="menu" hidden><button type="button" role="menuitem" data-act="pwd">Ganti password</button><button type="button" role="menuitem" data-act="theme">Ganti tema</button>' +
     (IS_DEMO ? '<button type="button" role="menuitem" data-act="demoReset">Reset data demo</button>' : '') + '<hr><button type="button" role="menuitem" data-act="logout">Keluar</button></div></div></header>' +
-    '<div id="banner"></div><div class="shell" id="shell" data-nav="closed"><aside class="side" id="side" aria-label="Menu utama"><div class="side-head"><b>Menu</b><button type="button" class="side-x" data-act="closeNav" aria-label="Tutup menu">' + icon('close', 20) + '</button></div><nav id="nav"></nav></aside><div class="scrim" data-act="closeNav"></div><main id="view" tabindex="-1"></main></div><nav class="bnav" id="bnav" aria-label="Navigasi utama"></nav>';
+    '<div id="banner"></div><div class="shell" id="shell" data-nav="closed"><aside class="side" id="side" aria-label="Menu utama"><div class="side-head"><b>Menu</b><button type="button" class="side-x" data-act="closeNav" aria-label="Tutup menu">' + icon('close', 20) + '</button></div><nav id="nav"></nav><div class="side-foot">CuciAja · Powered by ASKER<br>© 2026 ASKER. All rights reserved.</div></aside><div class="scrim" data-act="closeNav"></div><main id="view" tabindex="-1"></main></div><nav class="bnav" id="bnav" aria-label="Navigasi utama"></nav>';
   renderBanner(); renderNet(); S.navOverlay = false; applyNav();
 }
 function renderBanner() {
@@ -4023,7 +4029,7 @@ function laundryReceiptHtml(o, width) {
     (o.remaining > 0 ? row('SISA BAYAR', int(o.remaining), 'r-total') : '<div class="r-center r-lunas">LUNAS</div>') +
     (o.parfum || o.note ? '<hr class="r-sep">' + (o.parfum ? row('Parfum', esc(o.parfum)) : '') + (o.note ? '<div class="pre">Catatan: ' + esc(o.note) + '</div>' : '') : '') +
     (o.status && o.status !== 'diterima' ? '<hr class="r-sep">' + row('Status', esc(OST[o.status] || o.status)) : '');
-  return h + '<hr class="r-sep"><div class="r-center">Bawa nota ini saat mengambil cucian.</div><div class="r-center">' + esc(s.receipt_footer) + '</div></div>';
+  return h + '<hr class="r-sep"><div class="r-center">Bawa nota ini saat mengambil cucian.</div><div class="r-center">' + esc(s.receipt_footer) + '</div><div class="r-center r-powered">Powered by ASKER</div></div>';
 }
 function printLaundry(o) { printDoc(laundryReceiptHtml(o, S.paper), 'size:' + S.paper + 'mm auto;margin:0'); }
 
