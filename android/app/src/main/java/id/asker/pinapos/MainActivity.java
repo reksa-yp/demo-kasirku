@@ -7,10 +7,14 @@
  */
 package id.asker.pinapos;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.bluetooth.BluetoothAdapter;
+import android.util.Base64;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -43,14 +47,17 @@ public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String BASE = "https://" + HOST + "/assets/www/kasirku/";
     private static final int FILE_REQUEST = 7;
+    private static final int BT_PERMISSION = 8;
 
     private WebView web;
     private WebView printWeb;               // disimpan agar tidak dibersihkan GC saat mencetak
     private ValueCallback<Uri[]> fileCallback;
+    private BtPrinter bt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        bt = new BtPrinter(this);
         web = new WebView(this);
         setContentView(web);
 
@@ -146,6 +153,23 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onDestroy() {
+        if (bt != null) {
+            bt.close();
+        }
+        super.onDestroy();
+    }
+
+    private boolean hasBtPermission() {
+        return Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void btCallback(String id, boolean ok, String msg) {
+        final String js = "window.__btDone && window.__btDone(" + JSONObject.quote(id) + "," + ok + "," + JSONObject.quote(msg) + ")";
+        web.post(() -> web.evaluateJavascript(js, null));
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         web.evaluateJavascript("window.ksrFlush && window.ksrFlush()", null);
@@ -227,6 +251,63 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 notifySaved(false, "Gagal menyimpan: " + e.getMessage());
             }
+        }
+
+        /** Daftar printer Bluetooth yang sudah dipasangkan; atau {"error": ...}. */
+        @JavascriptInterface
+        public String btList() {
+            if (!bt.available()) {
+                return "{\"error\":\"nobt\"}";
+            }
+            if (!hasBtPermission()) {
+                runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT}, BT_PERMISSION));
+                return "{\"error\":\"permission\"}";
+            }
+            if (!bt.enabled()) {
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));
+                    } catch (Exception ignored) {
+                    }
+                });
+                return "{\"error\":\"off\"}";
+            }
+            return bt.bonded();
+        }
+
+        @JavascriptInterface
+        public boolean btConnected(String address) {
+            return bt.isConnected(address);
+        }
+
+        @JavascriptInterface
+        public void btConnect(String address, final String id) {
+            if (!hasBtPermission()) {
+                btCallback(id, false, "Izinkan PinaPos mengakses Perangkat sekitar (Bluetooth) lebih dulu.");
+                return;
+            }
+            bt.connect(address, (ok, msg) -> btCallback(id, ok, msg));
+        }
+
+        @JavascriptInterface
+        public void btWrite(String address, String base64, final String id) {
+            if (!hasBtPermission()) {
+                btCallback(id, false, "Izinkan PinaPos mengakses Perangkat sekitar (Bluetooth) lebih dulu.");
+                return;
+            }
+            byte[] data;
+            try {
+                data = Base64.decode(base64, Base64.DEFAULT);
+            } catch (Exception e) {
+                btCallback(id, false, "Data struk rusak.");
+                return;
+            }
+            bt.write(address, data, (ok, msg) -> btCallback(id, ok, msg));
+        }
+
+        @JavascriptInterface
+        public void btClose() {
+            bt.close();
         }
 
         /** Samakan warna status bar dengan tema yang dipilih di aplikasi. */

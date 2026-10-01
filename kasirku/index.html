@@ -2026,6 +2026,7 @@ function confirmBox(o) {
 
 /* ---------- cetak (struk, invoice, laporan) ---------- */
 function printDoc(html, pageCss) {
+  if (PRN.mode() !== 'browser' && /class="receipt\b/.test(html)) { return printThermalHtml(html, /class="receipt w58\b/.test(html) ? 58 : 80); }
   if (ANDROID && ANDROID.print) {
     // Aplikasi Android: kirim dokumen lengkap ke layanan cetak Android (printer, RawBT, atau Simpan PDF)
     const css = $$('style').filter(x => x.id !== 'pageStyle').map(x => x.textContent).join('\n');
@@ -2034,7 +2035,6 @@ function printDoc(html, pageCss) {
     try { ANDROID.print(doc, 'PinaPos'); } catch (e) { toast('Tidak dapat membuka layanan cetak: ' + e.message, 'err'); }
     return;
   }
-  if (PRN.mode() !== 'browser' && /class="receipt\b/.test(html)) { return printThermalHtml(html, /class="receipt w58\b/.test(html) ? 58 : 80); }
   const root = $('#printRoot');
   root.innerHTML = html;
   $('#pageStyle').textContent = '@page{' + pageCss + '}';
@@ -2129,7 +2129,7 @@ function openReceiptPreview(t) {
  * ==================================================================== */
 const PRN_PFX = 'ksr_';
 const PRN = {
-  mode() { const m = store.get(PRN_PFX + 'prn_mode'); return m === 'bt' || m === 'rawbt' ? m : 'browser'; },
+  mode() { const m = store.get(PRN_PFX + 'prn_mode'); return m === 'bt' || m === 'rawbt' || m === 'browser' ? m : (window.KasirkuAndroid && window.KasirkuAndroid.btList ? 'bt' : 'browser'); },
   setMode(m) { store.set(PRN_PFX + 'prn_mode', m); },
   cols() { return Number(store.get(PRN_PFX + 'prn_cols')) || 0; },
   logo() { return store.get(PRN_PFX + 'prn_logo') !== '0'; }
@@ -2370,6 +2370,64 @@ function rawbtSend(bytes) {
   window.location.href = 'intent:base64,' + btoa(bin) + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
 }
 
+/* ----------------------------------------------------------------------
+ * APK Android: printer Bluetooth Classic (SPP) lewat aplikasi PinaPos sendiri.
+ * WebView tidak punya Web Bluetooth, jadi BT diganti jembatan native
+ * (KasirkuAndroid.btList / btConnect / btWrite / btConnected / btClose).
+ * -------------------------------------------------------------------- */
+const NATIVE_BT = !!(window.KasirkuAndroid && window.KasirkuAndroid.btList);
+if (NATIVE_BT) {
+  const A = window.KasirkuAndroid, waits = {};
+  let seq = 0;
+  window.__btDone = (id, ok, msg) => { const w = waits[id]; if (!w) { return; } delete waits[id]; if (ok) { w.res(); } else { w.rej(new Error(msg || 'Gagal mengirim ke printer.')); } };
+  const call = fn => new Promise((res, rej) => { const id = 'b' + (++seq); waits[id] = { res, rej }; try { fn(id); } catch (e) { delete waits[id]; rej(e); } });
+  const b64 = bytes => { let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) { bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); } return btoa(bin); };
+  const addr = () => store.get(PRN_PFX + 'bt_id') || '';
+  Object.assign(BT, {
+    supported() { return true; },
+    name() { return store.get(PRN_PFX + 'bt_name') || ''; },
+    connected() { const a = addr(); try { return !!(a && A.btConnected(a)); } catch (e) { return false; } },
+    async restore() { const a = addr(); if (a) { this.device = { id: a, name: this.name() }; } return !!this.device; },
+    list() {
+      let r; try { r = JSON.parse(A.btList()); } catch (e) { throw new Error('Tidak dapat membaca daftar Bluetooth HP.'); }
+      if (r && r.error) {
+        throw new Error({
+          permission: 'Izinkan PinaPos mengakses "Perangkat sekitar" (Bluetooth), lalu tekan tombolnya sekali lagi.',
+          nobt: 'HP ini tidak memiliki Bluetooth.',
+          off: 'Bluetooth HP masih mati. Nyalakan Bluetooth, lalu tekan tombolnya sekali lagi.'
+        }[r.error] || String(r.error));
+      }
+      return r || [];
+    },
+    choose() {
+      return new Promise((res, rej) => {
+        let list; try { list = this.list(); } catch (e) { rej(e); return; }
+        if (!list.length) { rej(new Error('Belum ada printer yang dipasangkan. Buka Setelan → Bluetooth di HP, pasangkan (pair) printer thermal (PIN biasanya 0000 atau 1234), lalu kembali ke sini.')); return; }
+        let done = false;
+        const m = openModal({
+          title: 'Pilih printer Bluetooth',
+          body: '<p class="muted" style="margin:0 0 10px">Perangkat yang sudah dipasangkan (pair) di HP ini:</p><div class="stack">' +
+            list.map((d, i) => '<button type="button" class="btn" data-i="' + i + '" style="width:100%;min-height:56px;justify-content:flex-start;text-align:left"><span><b>' + esc(d.name || 'Tanpa nama') + '</b><br><small class="muted">' + esc(d.address) + '</small></span></button>').join('') + '</div>',
+          onClose() { if (!done) { rej(new Error('Pemilihan printer dibatalkan.')); } }
+        });
+        m.$$('[data-i]').forEach(b => { b.onclick = () => { const d = list[Number(b.dataset.i)]; done = true; m.close(); res(d); }; });
+      });
+    },
+    async pick() {
+      const d = await this.choose();
+      try { A.btClose(); } catch (e) {}
+      store.set(PRN_PFX + 'bt_id', d.address); store.set(PRN_PFX + 'bt_name', d.name || 'Printer');
+      this.device = { id: d.address, name: d.name };
+      toast('Menyambungkan ke ' + (d.name || 'printer') + '…');
+      await this.connect();
+      return this.device;
+    },
+    async connect() { const a = addr(); if (!a) { throw new Error('Printer Bluetooth belum dipilih.'); } await call(id => A.btConnect(a, id)); },
+    async write(bytes) { const a = addr(); if (!a) { throw new Error('Printer Bluetooth belum dipilih.'); } await call(id => A.btWrite(a, b64(bytes), id)); },
+    forget() { try { A.btClose(); } catch (e) {} this.device = null; store.del(PRN_PFX + 'bt_id'); store.del(PRN_PFX + 'bt_name'); }
+  });
+}
+
 /** Dipanggil printDoc() untuk setiap struk thermal bila mode bukan "browser". */
 async function printThermalHtml(html, paper) {
   const mode = PRN.mode();
@@ -2395,9 +2453,9 @@ function openPrinterSetup() {
   const m = openModal({
     title: 'Printer struk', size: 'wide',
     body: '<div class="field"><span class="field-label">Cara mencetak struk di perangkat ini</span><div class="rc-paper-options">' +
-      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="bt"> <span><b>Printer Bluetooth langsung</b><small>Chrome Android / Windows. Untuk printer thermal Bluetooth (BLE), tanpa aplikasi tambahan.</small></span></label>' +
+      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="bt"> <span><b>Printer Bluetooth langsung</b><small>' + (NATIVE_BT ? 'Untuk printer thermal Bluetooth yang sudah dipasangkan (pair) di HP ini. Tanpa aplikasi tambahan.' : 'Chrome Android / Windows. Untuk printer thermal Bluetooth (BLE), tanpa aplikasi tambahan.') + '</small></span></label>' +
       '<label class="rc-paper-option"><input type="radio" name="prnMode" value="rawbt"> <span><b>Lewat aplikasi RawBT (Android)</b><small>Untuk printer yang hanya Bluetooth Classic dan tidak muncul di mode di atas.</small></span></label>' +
-      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="browser"> <span><b>Dialog cetak browser</b><small>Printer USB/Wi-Fi yang terpasang di komputer. Printer Bluetooth tidak muncul di sini.</small></span></label>' +
+      (NATIVE_BT ? '<label class="rc-paper-option"><input type="radio" name="prnMode" value="browser"> <span><b>Layanan cetak Android</b><small>Printer Wi-Fi/USB atau Simpan sebagai PDF lewat layar cetak Android.</small></span></label>' : '<label class="rc-paper-option"><input type="radio" name="prnMode" value="browser"> <span><b>Dialog cetak browser</b><small>Printer USB/Wi-Fi yang terpasang di komputer. Printer Bluetooth tidak muncul di sini.</small></span></label>') +
       '</div></div><div id="prnDetail"></div>' +
       '<div class="grid2" style="margin-top:12px"><label class="field"><span>Ukuran kertas</span><select id="prnPaper"><option value="58">58 mm</option><option value="80">80 mm</option></select></label>' +
       '<label class="field"><span>Karakter per baris</span><select id="prnCols"><option value="0">Otomatis (58mm = 32, 80mm = 48)</option><option value="32">32</option><option value="42">42</option><option value="48">48</option></select><small>Ubah bila baris struk terpotong / terlalu sempit.</small></label></div>' +
@@ -2408,7 +2466,11 @@ function openPrinterSetup() {
   const q = s => $(s, m.el);
   q('input[name="prnMode"][value="' + PRN.mode() + '"]').checked = true;
   q('#prnPaper').value = String(S.paper); q('#prnCols').value = String(PRN.cols()); q('#prnLogo').checked = PRN.logo();
-  const tips = '<details style="margin-top:10px"><summary><b>Printer tidak muncul?</b></summary><ul class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">' +
+  const tips = NATIVE_BT ? '<details style="margin-top:10px"><summary><b>Printer tidak muncul / gagal tersambung?</b></summary><ul class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">' +
+    '<li>Nyalakan printer dan Bluetooth HP.</li>' +
+    '<li>Pasangkan (<i>pair</i>) printer dulu di <b>Setelan → Bluetooth</b> HP. PIN biasanya <b>0000</b> atau <b>1234</b>.</li>' +
+    '<li>Izinkan PinaPos mengakses <b>Perangkat sekitar</b> saat diminta (Setelan → Aplikasi → PinaPos → Izin).</li>' +
+    '<li>Printer hanya bisa tersambung ke satu HP/aplikasi. Tutup aplikasi printer lain (mis. RawBT) bila sedang tersambung.</li></ul></details>' : '<details style="margin-top:10px"><summary><b>Printer tidak muncul?</b></summary><ul class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">' +
     '<li>Nyalakan Bluetooth <b>dan Lokasi</b> di HP, lalu izinkan Chrome mengakses "Perangkat sekitar" (Setelan → Aplikasi → Chrome → Izin).</li>' +
     '<li>Buka di <b>Google Chrome</b>, bukan browser bawaan WhatsApp/Facebook.</li>' +
     '<li>Printer yang sedang tersambung ke HP/aplikasi lain tidak akan terlihat — putuskan dulu dari aplikasi tersebut.</li>' +
@@ -2420,9 +2482,10 @@ function openPrinterSetup() {
       if (!BT.supported()) { box.innerHTML = '<p class="page-note" style="margin:0">⚠ ' + esc(btUnsupportedMsg()) + '</p>' + tips; return; }
       const nm = BT.name();
       box.innerHTML = '<p class="page-note" style="margin:0">' + (BT.connected() ? '✓ Tersambung ke <b>' + esc(nm) + '</b>' : nm ? 'Printer terakhir: <b>' + esc(nm) + '</b> (disambungkan otomatis saat mencetak)' : 'Belum ada printer dipilih.') + '</p>' +
-        '<div class="actions" style="margin-top:10px"><button type="button" class="btn btn-primary" id="prnPick">' + (nm ? 'Ganti printer' : 'Cari &amp; sambungkan printer') + '</button>' +
+        '<div class="actions" style="margin-top:10px"><button type="button" class="btn btn-primary" id="prnPick">' + (nm ? 'Ganti printer' : NATIVE_BT ? 'Pilih printer' : 'Cari &amp; sambungkan printer') + '</button>' +
         (nm ? '<button type="button" class="btn btn-danger" id="prnForget">Lupakan printer</button>' : '') + '</div>' + tips;
       q('#prnPick').onclick = e => run(e.currentTarget, async () => { await BT.pick(); toast('Tersambung ke ' + BT.name() + '.', 'ok'); draw(); });
+      if (NATIVE_BT && nm && !BT.connected()) { box.querySelector('.actions').insertAdjacentHTML('afterbegin', '<button type="button" class="btn" id="prnConn">Sambungkan</button>'); q('#prnConn').onclick = e => run(e.currentTarget, async () => { await BT.connect(); toast('Tersambung ke ' + BT.name() + '.', 'ok'); draw(); }); }
       if (q('#prnForget')) { q('#prnForget').onclick = () => { BT.forget(); draw(); }; }
     } else if (mode === 'rawbt') {
       box.innerHTML = '<div class="page-note" style="margin:0"><b>Langkah sekali saja:</b><ol style="margin:6px 0 0;padding-left:20px;line-height:1.55">' +
