@@ -7,22 +7,23 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <meta name="color-scheme" content="light dark">
-<title>Kasirku Demo</title>
+<title>PinaPos Demo</title>
 <meta name="description" content="Demo aplikasi kasir toko: penjualan, stok, invoice, laporan, mode offline.">
-<meta property="og:title" content="Kasirku Demo">
+<meta property="og:title" content="PinaPos Demo">
 <meta property="og:description" content="Demo aplikasi kasir toko: penjualan, stok, invoice, laporan, mode offline.">
-<link rel="icon" href="../assets/kasirku.png">
-<meta name="theme-color" content="#0f2a24">
+<link rel="icon" href="../assets/pinapos.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../assets/pinapos.png">
+<meta name="theme-color" content="#173a2a">
 <style>
-/* ===== Kasirku - tampilan ===== */
+/* ===== PinaPos - tampilan ===== */
 :root {
-  /* ====== PALET KASIRKU — ubah di sini untuk mengganti warna seluruh aplikasi ====== */
-  --bg:#f3f5f1; --surface:#fff; --surface-2:#eef2ee; --ink:#15211d; --muted:#5d6c67; --line:#dce4df;
-  --brand:#0e8a6f; --brand-2:#14b88f; --brand-ink:#fff; --brand-soft:#dcf2ea;
-  --accent:#ff8a3d; --accent-2:#ffb34d; --accent-soft:#ffeedd;
-  --bar:#0f2a24; --bar-2:#16463b; --bar-ink:#e9f5f0; --bar-line:rgba(255,255,255,.12);
-  --lcd:#0f2a24; --lcd-ink:#7ef0c8;
-  --pay:#f2711c; --pay-2:#ffa24d; --pay-hover:#dd6212; --pay-ink:#fff;
+  /* ====== PALET PINAPOS — ubah di sini untuk mengganti warna seluruh aplikasi ====== */
+  --bg:#f6f4ec; --surface:#fff; --surface-2:#efece2; --ink:#1b2a22; --muted:#5a665e; --line:#e1ddd0;
+  --brand:#1f6f43; --brand-2:#2e8b57; --brand-ink:#fff; --brand-soft:#dcefe3;
+  --accent:#f2b705; --accent-2:#ffd04d; --accent-soft:#fdf3d2;
+  --bar:#173a2a; --bar-2:#1f4d37; --bar-ink:#eef6f0; --bar-line:rgba(255,255,255,.12);
+  --lcd:#173a2a; --lcd-ink:#f2c94c;
+  --pay:#f2b705; --pay-2:#ffd04d; --pay-hover:#d9a300; --pay-ink:#1b2a22;
   --ok:#0b7a4b; --ok-bg:#d9f4e6; --warn:#9a4a00; --warn-bg:#ffedd2; --danger:#c3302a; --danger-bg:#fde6e4;
   --shadow:0 18px 44px -12px rgba(15,42,36,.35); --shadow-sm:0 1px 2px rgba(15,42,36,.06),0 4px 14px -6px rgba(15,42,36,.12);
   --r:14px; --r-sm:10px;
@@ -31,16 +32,16 @@
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){ color-scheme:dark; --bg:#0a1411; --surface:#12201b; --surface-2:#182a24; --ink:#e5f1ec; --muted:#95aaa2; --line:#243830;
-    --brand:#2fd0a3; --brand-2:#5fe3bd; --brand-ink:#05201a; --brand-soft:#123a30; --accent:#ff9a55; --accent-2:#ffc06b; --accent-soft:#3a2413;
-    --bar:#07110e; --bar-2:#0f2a24; --lcd:#07110e; --pay:#ff7f2a; --pay-hover:#ff9148;
-    --pay-2:#ffab66; --ok:#6ee7b0; --ok-bg:#0f2e21; --warn:#fbbf24; --warn-bg:#3a2a08; --danger:#ff8f86; --danger-bg:#3a1614;
+  :root:not([data-theme="light"]){ color-scheme:dark; --bg:#0d130f; --surface:#151d18; --surface-2:#1b2620; --ink:#e9f1ec; --muted:#9aaba1; --line:#27352d;
+    --brand:#5cc28a; --brand-2:#7fd3a4; --brand-ink:#08140d; --brand-soft:#173525; --accent:#f5c437; --accent-2:#ffd866; --accent-soft:#3a2f0c;
+    --bar:#0a1510; --bar-2:#13291d; --lcd:#0a1510; --pay:#f2b705; --pay-hover:#ffc93c;
+    --pay-2:#ffd04d; --ok:#6ee7b0; --ok-bg:#0f2e21; --warn:#fbbf24; --warn-bg:#3a2a08; --danger:#ff8f86; --danger-bg:#3a1614;
     --shadow:0 18px 44px -12px rgba(0,0,0,.7); --shadow-sm:0 1px 2px rgba(0,0,0,.4),0 4px 14px -6px rgba(0,0,0,.5); }
 }
-:root[data-theme="dark"]{ color-scheme:dark; --bg:#0a1411; --surface:#12201b; --surface-2:#182a24; --ink:#e5f1ec; --muted:#95aaa2; --line:#243830;
-  --brand:#2fd0a3; --brand-2:#5fe3bd; --brand-ink:#05201a; --brand-soft:#123a30; --accent:#ff9a55; --accent-2:#ffc06b; --accent-soft:#3a2413;
-  --bar:#07110e; --bar-2:#0f2a24; --lcd:#07110e; --pay:#ff7f2a; --pay-hover:#ff9148;
-  --pay-2:#ffab66; --ok:#6ee7b0; --ok-bg:#0f2e21; --warn:#fbbf24; --warn-bg:#3a2a08; --danger:#ff8f86; --danger-bg:#3a1614;
+:root[data-theme="dark"]{ color-scheme:dark; --bg:#0d130f; --surface:#151d18; --surface-2:#1b2620; --ink:#e9f1ec; --muted:#9aaba1; --line:#27352d;
+  --brand:#5cc28a; --brand-2:#7fd3a4; --brand-ink:#08140d; --brand-soft:#173525; --accent:#f5c437; --accent-2:#ffd866; --accent-soft:#3a2f0c;
+  --bar:#0a1510; --bar-2:#13291d; --lcd:#0a1510; --pay:#f2b705; --pay-hover:#ffc93c;
+  --pay-2:#ffd04d; --ok:#6ee7b0; --ok-bg:#0f2e21; --warn:#fbbf24; --warn-bg:#3a2a08; --danger:#ff8f86; --danger-bg:#3a1614;
   --shadow:0 18px 44px -12px rgba(0,0,0,.7); --shadow-sm:0 1px 2px rgba(0,0,0,.4),0 4px 14px -6px rgba(0,0,0,.5); }
 
 *,*::before,*::after{ box-sizing:border-box; }
@@ -377,7 +378,7 @@ body.is-kasir .side{ align-self:stretch; height:auto; }
 }
 
 /* =====================================================================
-   TEMA KASIRKU — lapisan tampilan (warna, bentuk, efek).
+   TEMA PINAPOS — lapisan tampilan (warna, bentuk, efek).
    Semua warna mengambil token di :root, jadi cukup ubah palet di atas.
    ===================================================================== */
 body{ background:var(--bg); }
@@ -387,19 +388,19 @@ h1,h2,h3{ font-family:var(--font-d); letter-spacing:-.01em; }
 /* tombol & input */
 .btn{ border-radius:var(--r-sm); transition:transform .12s ease,box-shadow .15s ease,background .15s ease; }
 .btn:active:not(:disabled){ transform:translateY(1px); }
-.btn-primary{ background:linear-gradient(135deg,var(--brand),var(--brand-2)); border-color:transparent; box-shadow:0 6px 16px -8px var(--brand); }
-.btn-primary:hover:not(:disabled){ background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 90%,#000),var(--brand)); }
-.btn-pay{ color:var(--pay-ink); background:linear-gradient(135deg,var(--pay),var(--pay-2)); border-color:transparent; box-shadow:0 8px 20px -10px var(--pay); }
-.btn-pay:hover:not(:disabled){ background:linear-gradient(135deg,var(--pay-hover),var(--pay)); }
+.btn-primary{ background:var(--brand); border-color:transparent; box-shadow:0 6px 16px -8px var(--brand); }
+.btn-primary:hover:not(:disabled){ background:color-mix(in srgb,var(--brand) 90%,#000); }
+.btn-pay{ color:var(--pay-ink); background:var(--pay); border-color:transparent; box-shadow:0 8px 20px -10px var(--pay); }
+.btn-pay:hover:not(:disabled){ background:var(--pay-hover); }
 input[type=text],input[type=password],input[type=number],input[type=email],input[type=date],input[type=search],select,textarea{ border-radius:var(--r-sm); background:var(--surface); transition:border-color .15s,box-shadow .15s; }
 
 /* topbar */
-.topbar{ background:linear-gradient(110deg,var(--bar) 0%,var(--bar) 45%,var(--bar-2) 100%); box-shadow:0 6px 20px -12px rgba(0,0,0,.5); }
-.brand-mark{ min-width:40px; height:40px; border-radius:12px; color:#fff; font-family:var(--font-d); font-size:16px; background:linear-gradient(135deg,var(--brand-2),var(--accent)); box-shadow:0 6px 16px -6px var(--accent); }
+.topbar{ background:var(--bar); box-shadow:0 6px 20px -12px rgba(0,0,0,.5); }
+.brand-mark{ min-width:40px; height:40px; border-radius:12px; color:var(--pay-ink); font-family:var(--font-d); font-size:16px; background:var(--accent); }
 .brand-name b{ font-family:var(--font-d); font-size:16px; letter-spacing:-.01em; }
 .who-btn,.burger,.net{ border-color:var(--bar-line); border-radius:12px; background:rgba(255,255,255,.04); }
 .net{ border-radius:999px; }
-.ava{ color:#fff; background:linear-gradient(135deg,var(--brand-2),var(--accent)); }
+.ava{ color:var(--pay-ink); background:var(--accent); }
 
 /* menu samping */
 .side{ background:var(--surface); border-right:1px solid var(--line); }
@@ -408,16 +409,16 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .side nav button .ic{ box-sizing:content-box; padding:7px; border-radius:10px; background:var(--surface-2); opacity:1; color:var(--muted); transition:inherit; }
 .side nav button:hover .ic{ color:var(--brand); background:var(--brand-soft); }
 .side nav button[aria-current=page]{ color:var(--ink); background:var(--brand-soft); }
-.side nav button[aria-current=page] .ic{ color:#fff; background:linear-gradient(135deg,var(--brand),var(--brand-2)); box-shadow:0 6px 14px -6px var(--brand); }
+.side nav button[aria-current=page] .ic{ color:#fff; background:var(--brand); box-shadow:0 6px 14px -6px var(--brand); }
 .side nav button[aria-current=page]::before{ content:''; position:absolute; left:-10px; top:10px; bottom:10px; width:4px; border-radius:0 4px 4px 0; background:var(--brand); }
 
 /* halaman */
 .page-head h1{ font-size:27px; font-weight:750; }
-.page-head h1::after{ content:''; display:block; width:36px; height:4px; margin-top:8px; border-radius:4px; background:linear-gradient(90deg,var(--brand),var(--accent)); }
+.page-head h1::after{ content:''; display:block; width:36px; height:4px; margin-top:8px; border-radius:4px; background:var(--brand); }
 .card{ border-radius:var(--r); box-shadow:var(--shadow-sm); border-color:color-mix(in srgb,var(--line) 70%,transparent); }
 .card-head h2{ font-size:16px; font-weight:700; }
 .chip{ display:inline-flex; align-items:center; gap:7px; transition:all .15s; }
-.chip[aria-pressed=true]{ background:linear-gradient(135deg,var(--brand),var(--brand-2)); border-color:transparent; box-shadow:0 6px 14px -8px var(--brand); }
+.chip[aria-pressed=true]{ background:var(--brand); border-color:transparent; box-shadow:0 6px 14px -8px var(--brand); }
 .chip .dot{ width:9px; height:9px; border-radius:50%; background:hsl(var(--h) 70% 50%); }
 .chip[aria-pressed=true] .dot{ background:#fff; }
 
@@ -428,17 +429,17 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .kpi b{ font-family:var(--font-d); font-size:23px; font-weight:750; }
 .kpi::after{ content:''; position:absolute; right:-26px; top:-26px; width:90px; height:90px; border-radius:50%; background:color-mix(in srgb,var(--kc,var(--brand)) 9%,transparent); }
 .kpi.k2{ --kc:#3b82f6; } .kpi.k3{ --kc:#a855f7; } .kpi.k4{ --kc:var(--ok); } .kpi.k5{ --kc:var(--accent); }
-.kpi.dark{ color:#fff; border:0; background:radial-gradient(120% 140% at 100% 0%,var(--bar-2) 0%,var(--bar) 60%); }
+.kpi.dark{ color:#fff; border:0; background:var(--bar); }
 .kpi.dark .ki{ color:var(--bar); background:var(--lcd-ink); } .kpi.dark::after{ background:rgba(126,240,200,.08); width:140px; height:140px; }
 .kpi.dark span,.kpi.dark small{ color:#a9c9bf; } .kpi.dark b{ color:var(--lcd-ink); }
 .kpi.dark .up{ color:#7ef0c8; } .kpi.dark .down{ color:#ffb199; }
 
 /* grafik */
-.chart .bar{ fill:url(#gBar); } .chart .bar.last{ fill:url(#gBarA); } .chart .bar:hover{ fill:var(--accent); }
-.hbar i{ background:linear-gradient(90deg,var(--brand),var(--brand-2)); }
-.hbar:nth-child(2) i{ background:linear-gradient(90deg,#3b82f6,#60a5fa); } .hbar:nth-child(3) i{ background:linear-gradient(90deg,#a855f7,#c084fc); }
-.hbar:nth-child(4) i{ background:linear-gradient(90deg,var(--accent),var(--accent-2)); } .hbar:nth-child(5) i{ background:linear-gradient(90deg,#ef4444,#f87171); }
-.share i{ background:linear-gradient(90deg,var(--brand),var(--brand-2)); }
+.chart .bar{ fill:var(--brand); } .chart .bar.last{ fill:var(--accent); } .chart .bar:hover{ fill:var(--brand-2); }
+.hbar i{ background:var(--brand); }
+.hbar:nth-child(2) i{ background:#3b82f6; } .hbar:nth-child(3) i{ background:#a855f7; }
+.hbar:nth-child(4) i{ background:var(--accent); } .hbar:nth-child(5) i{ background:#ef4444; }
+.share i{ background:var(--brand); }
 
 /* tabel */
 .t th{ font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; background:color-mix(in srgb,var(--surface-2) 80%,var(--surface)); }
@@ -446,22 +447,20 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .t tbody tr:nth-child(even){ background:color-mix(in srgb,var(--surface-2) 45%,transparent); }
 .t tbody tr:hover{ background:color-mix(in srgb,var(--brand) 7%,transparent); }
 .badge{ padding:2px 10px; }
-.empty::before{ content:''; display:block; width:54px; height:54px; margin:0 auto 12px; border-radius:18px; background:
-  radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--brand) 45%,transparent) 0 7px,transparent 8px),
-  linear-gradient(135deg,var(--brand-soft),var(--accent-soft)); }
+.empty::before{ content:''; display:block; width:54px; height:54px; margin:0 auto 12px; border-radius:18px; background:var(--brand-soft); }
 
 /* modal & toast */
 .modal{ background:rgba(6,20,16,.55); backdrop-filter:blur(3px); }
 .modal-card{ border-radius:18px; animation:pop .18s ease-out; }
 @keyframes pop{ from{ transform:translateY(10px) scale(.985); opacity:0; } }
-.modal-head{ background:linear-gradient(180deg,color-mix(in srgb,var(--brand-soft) 50%,var(--surface)),var(--surface)); }
-.toast{ border-radius:12px; background:var(--bar); } .toast.ok{ background:linear-gradient(135deg,#0b7a4b,#10a364); } .toast.err{ background:linear-gradient(135deg,#b3261e,#d9483f); }
+.modal-head{ background:var(--surface); }
+.toast{ border-radius:12px; background:var(--bar); } .toast.ok{ background:#0b7a4b; } .toast.err{ background:#b3261e; }
 .seg{ border-radius:12px; } .seg button{ border-radius:9px; }
 
 /* ---------- kasir ---------- */
 .cart-panel,.catalog-panel{ border-radius:18px; box-shadow:var(--shadow-sm); border-color:color-mix(in srgb,var(--line) 70%,transparent); }
 .cart-head h2,.catalog-head{ font-family:var(--font-d); }
-.pill{ color:#fff; background:linear-gradient(135deg,var(--brand),var(--brand-2)); }
+.pill{ color:#fff; background:var(--brand); }
 .cust-btn{ border-radius:12px; border-style:dashed; }
 .cust-btn.on{ border-style:solid; }
 .cart-line{ grid-template-columns:auto 1fr auto; gap:2px 12px; align-items:start; }
@@ -469,16 +468,16 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .cart-line .sub{ grid-column:3; } .cart-line .ctl{ grid-column:2/4; }
 .cart-line:nth-child(odd){ background:color-mix(in srgb,var(--surface-2) 40%,transparent); }
 .qty{ border-radius:10px; } .qty button{ font-weight:700; color:var(--brand); }
-.summary{ background:linear-gradient(180deg,var(--surface-2),color-mix(in srgb,var(--brand-soft) 35%,var(--surface-2))); }
-.lcd{ position:relative; overflow:hidden; padding:14px 16px; border-radius:14px; background:radial-gradient(130% 160% at 100% 0%,var(--bar-2) 0%,var(--lcd) 55%); box-shadow:inset 0 0 0 1px rgba(126,240,200,.12); }
+.summary{ background:var(--surface-2); }
+.lcd{ position:relative; overflow:hidden; padding:14px 16px; border-radius:14px; background:var(--lcd); box-shadow:inset 0 0 0 1px rgba(242,201,76,.14); }
 .lcd strong{ font-family:var(--font-d); font-size:32px; text-shadow:0 0 18px rgba(126,240,200,.35); }
-.lcd::after{ content:''; position:absolute; inset:0; background:repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 3px); pointer-events:none; }
-.pay-btn{ color:var(--pay-ink); border-radius:14px; background:linear-gradient(135deg,var(--pay),var(--pay-2)); box-shadow:0 12px 24px -12px var(--pay); transition:transform .12s,box-shadow .15s; }
-.pay-btn:hover:not(:disabled){ background:linear-gradient(135deg,var(--pay-hover),var(--pay)); transform:translateY(-1px); box-shadow:0 16px 28px -12px var(--pay); }
+
+.pay-btn{ color:var(--pay-ink); border-radius:14px; background:var(--pay); box-shadow:0 12px 24px -12px var(--pay); transition:transform .12s,box-shadow .15s; }
+.pay-btn:hover:not(:disabled){ background:var(--pay-hover); transform:translateY(-1px); box-shadow:0 16px 28px -12px var(--pay); }
 .pay-btn:disabled{ background:var(--line); color:var(--muted); box-shadow:none; opacity:1; }
 .scan input{ border-radius:14px; border-color:color-mix(in srgb,var(--brand) 35%,var(--line)); background:var(--surface); }
 .scan svg{ color:var(--brand); opacity:.9; }
-.product-grid{ grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:12px; background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--surface-2) 60%,transparent)); }
+.product-grid{ grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:12px; }
 .pcard{ position:relative; gap:4px; min-height:0; padding:10px; border-radius:16px; border-color:color-mix(in srgb,var(--line) 70%,transparent); box-shadow:var(--shadow-sm); transition:transform .14s ease,box-shadow .16s ease,border-color .16s; }
 .pcard:hover:not(:disabled){ transform:translateY(-2px); border-color:hsl(var(--h) 55% 55%); box-shadow:0 14px 26px -14px hsl(var(--h) 60% 35% / .55); }
 .pcard:active:not(:disabled){ transform:translateY(0) scale(.99); }
@@ -487,30 +486,28 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .pcard .st{ display:inline-flex; align-self:flex-start; padding:1px 8px; border-radius:999px; background:var(--surface-2); }
 .pcard .st.low{ color:var(--warn); background:var(--warn-bg); } .pcard .st.out{ color:var(--danger); background:var(--danger-bg); }
 .thumb{ flex:none; display:grid; place-items:center; font-family:var(--font-d); font-weight:800; letter-spacing:.02em;
-  color:hsl(var(--h) 65% 26%); background:linear-gradient(135deg,hsl(var(--h) 85% 88%),hsl(calc(var(--h) + 35) 85% 80%)); }
-:root[data-theme="dark"] .thumb{ color:hsl(var(--h) 80% 86%); background:linear-gradient(135deg,hsl(var(--h) 45% 24%),hsl(calc(var(--h) + 35) 45% 30%)); }
-@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .thumb{ color:hsl(var(--h) 80% 86%); background:linear-gradient(135deg,hsl(var(--h) 45% 24%),hsl(calc(var(--h) + 35) 45% 30%)); } }
-.pay-total,.done-change{ border-radius:14px; background:radial-gradient(130% 160% at 100% 0%,var(--bar-2) 0%,var(--lcd) 55%); }
+  color:hsl(var(--h) 65% 26%); background:hsl(var(--h) 85% 88%); }
+:root[data-theme="dark"] .thumb{ color:hsl(var(--h) 80% 86%); background:hsl(var(--h) 45% 24%); }
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .thumb{ color:hsl(var(--h) 80% 86%); background:hsl(var(--h) 45% 24%); } }
+.pay-total,.done-change{ border-radius:14px; background:var(--lcd); }
 .pay-total strong,.done-change strong{ font-family:var(--font-d); }
-.method{ border-radius:12px; transition:all .15s; } .method[aria-pressed=true]{ color:#fff; background:linear-gradient(135deg,var(--brand),var(--brand-2)); border-color:transparent; box-shadow:0 8px 18px -10px var(--brand); }
+.method{ border-radius:12px; transition:all .15s; } .method[aria-pressed=true]{ color:#fff; background:var(--brand); border-color:transparent; box-shadow:0 8px 18px -10px var(--brand); }
 .quick button{ border-radius:10px; } .quick button:hover{ color:var(--brand); border-color:var(--brand); background:var(--brand-soft); }
-.done-head .check{ background:linear-gradient(135deg,var(--brand),var(--brand-2)); box-shadow:0 8px 20px -8px var(--brand); }
-@media (max-width:900px){ .pane-switch button{ border-radius:14px; } .pane-switch button.pri{ background:linear-gradient(135deg,var(--brand),var(--brand-2)); } }
+.done-head .check{ background:var(--brand); box-shadow:0 8px 20px -8px var(--brand); }
+@media (max-width:900px){ .pane-switch button{ border-radius:14px; } .pane-switch button.pri{ background:var(--brand); } }
 
 /* ---------- login ---------- */
-.login{ padding:24px 16px; background:
-  radial-gradient(60% 50% at 0% 0%,color-mix(in srgb,var(--brand) 18%,transparent),transparent 70%),
-  radial-gradient(50% 45% at 100% 100%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 70%),var(--bg); }
+.login{ padding:24px 16px; background:var(--bg); }
 .login-wrap{ width:min(920px,100%); display:grid; grid-template-columns:1.05fr 1fr; overflow:hidden; background:var(--surface); border-radius:24px; box-shadow:var(--shadow); }
 .login-hero{ position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; gap:28px; padding:34px 32px; color:var(--bar-ink);
-  background:radial-gradient(90% 80% at 100% 0%,var(--bar-2),transparent 70%),linear-gradient(160deg,var(--bar),#0a1f1a); }
-.login-hero::before,.login-hero::after{ content:''; position:absolute; border-radius:50%; pointer-events:none; }
-.login-hero::before{ width:260px; height:260px; right:-90px; bottom:-90px; background:radial-gradient(circle,color-mix(in srgb,var(--accent) 55%,transparent),transparent 70%); opacity:.55; }
-.login-hero::after{ width:180px; height:180px; left:-60px; top:40%; background:radial-gradient(circle,rgba(126,240,200,.35),transparent 70%); }
+  background:var(--bar); }
+.lh-mark{ display:block; flex:none; } .lh-mark svg{ display:block; height:56px; width:auto; }
+
+
 .login-hero .lh-top{ display:flex; align-items:center; gap:12px; position:relative; z-index:1; }
 .login-hero .lh-top b{ font-family:var(--font-d); font-size:20px; }
 .login-hero h2{ position:relative; z-index:1; font-size:32px; line-height:1.12; font-weight:800; text-wrap:balance; }
-.login-hero h2 em{ font-style:normal; background:linear-gradient(90deg,var(--lcd-ink),var(--accent-2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.login-hero h2 em{ font-style:normal; color:var(--lcd-ink); }
 .login-hero ul{ position:relative; z-index:1; display:grid; gap:12px; margin:0; padding:0; list-style:none; font-size:14px; }
 .login-hero li{ display:flex; gap:12px; align-items:flex-start; }
 .login-hero li i{ flex:none; display:grid; place-items:center; width:32px; height:32px; border-radius:10px; font-style:normal; color:var(--bar); background:var(--lcd-ink); font-weight:800; }
@@ -543,7 +540,7 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .th-color input[type=text]{ min-height:40px; font-family:ui-monospace,Consolas,monospace; text-transform:lowercase; }
 .th-prev{ display:grid; grid-template-columns:1.2fr 1fr; gap:12px; margin-top:16px; padding:12px; border-radius:16px; background:var(--bg); border:1px dashed var(--line); }
 @media (max-width:640px){ .th-prev{ grid-template-columns:1fr; } }
-.th-prev .bar{ grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:10px 12px; color:var(--bar-ink); border-radius:12px; background:linear-gradient(110deg,var(--bar) 45%,var(--bar-2)); }
+.th-prev .bar{ grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:10px 12px; color:var(--bar-ink); border-radius:12px; background:var(--bar); }
 .th-prev .bar .brand-mark{ min-width:30px; height:30px; font-size:13px; border-radius:9px; }
 .th-prev .bar b{ font-size:14px; } .th-prev .bar .grow{ flex:1; }
 .th-prev .bar .net{ min-height:26px; font-size:11px; padding:0 9px; }
@@ -555,7 +552,7 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 /* banner */
 .off-banner,.pwd-banner{ font-weight:500; }
 body.local .net{ display:none !important; }
-.demo-note{ color:#3d2300; background:linear-gradient(90deg,#ffe0b8,#ffd08a); }
+.demo-note{ color:#3d2c00; background:#fdf3d2; }
 /* =====================================================================
    TAMPILAN HP / ANDROID
    - navigasi bawah, bar keranjang, tabel menjadi kartu, tidak ada yang terpotong
@@ -579,7 +576,7 @@ button,a,label,input,select,textarea{ touch-action:manipulation; }
   .bnav button .ic{ width:24px; height:24px; padding:3px 12px; box-sizing:content-box; border-radius:999px; transition:background .15s,color .15s; }
   .bnav button span{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .bnav button[aria-current=page]{ color:var(--brand); }
-  .bnav button[aria-current=page] .ic{ color:#fff; background:linear-gradient(135deg,var(--brand),var(--brand-2)); }
+  .bnav button[aria-current=page] .ic{ color:#fff; background:var(--brand); }
   body.kb .bnav,body.kb .cart-bar{ display:none !important; }
   body.kb.has-bnav{ padding-bottom:0; }
   /* menu samping jadi laci dari kiri (dibuka lewat "Menu") */
@@ -594,7 +591,7 @@ button,a,label,input,select,textarea{ touch-action:manipulation; }
   .cart-bar{ position:fixed; z-index:44; left:8px; right:8px; bottom:calc(var(--bnav-h) + 8px + env(safe-area-inset-bottom,0px)); }
   .kasir[data-pane=catalog] .cart-bar.on{ display:block; animation:pop .2s ease-out; }
   .cart-bar button{ width:100%; display:flex; align-items:center; gap:12px; min-height:56px; padding:8px 10px 8px 14px; color:#fff; text-align:left; border:0; border-radius:16px;
-    background:linear-gradient(135deg,var(--brand),var(--brand-2)); box-shadow:0 14px 28px -12px var(--brand); }
+    background:var(--brand); box-shadow:0 14px 28px -12px var(--brand); }
   .cart-bar .cb-n{ display:grid; place-items:center; min-width:34px; height:34px; padding:0 8px; font-weight:800; color:var(--brand); background:#fff; border-radius:11px; }
   .cart-bar .cb-t{ flex:1; min-width:0; line-height:1.2; } .cart-bar .cb-t small{ display:block; font-size:12px; opacity:.85; } .cart-bar .cb-t b{ font-size:18px; }
   .cart-bar .cb-go{ flex:none; padding:8px 12px; font-weight:800; background:rgba(255,255,255,.18); border-radius:11px; }
@@ -702,7 +699,7 @@ button,a,label,input,select,textarea{ touch-action:manipulation; }
 <script>
 window.KASIRKU_DEMO = (function () {
 /**
- * Kasirku - core.js (versi JavaScript untuk demo; server asli memakai app/Core.php)
+ * PinaPos - core.js (versi JavaScript untuk demo; server asli memakai app/Core.php)
  * Logika bisnis (login, kasir, produk, pelanggan, user, laporan).
  * File ini TIDAK memanggil layanan Google secara langsung; semua akses data dan
  * kripto lewat objek "platform" (lihat Code.gs). Karena itu file yang sama juga
@@ -728,7 +725,7 @@ var SCHEMA = {
 };
 
 var SETTING_DEFAULTS = {
-  store_name: 'Kasirku', store_address: '', store_phone: '', store_email: '', tax_no: '',
+  store_name: 'PinaPos', store_address: '', store_phone: '', store_email: '', tax_no: '',
   bank_name: '', bank_account: '', bank_holder: '',
   tax_rate: '0', paper_width: '80', receipt_footer: 'Terima kasih atas kunjungan Anda.',
   show_logo_on_receipt: '1', auto_print: '0', inv_code: '200', inv_year: '', inv_next: '1',
@@ -1221,7 +1218,7 @@ function createBackend_(P) {
       ['brand', 'accent', 'pay', 'bar'].forEach(function (k) {
         if (p.theme[k] === undefined) { return; }
         var v = String(p.theme[k] || '').trim().toLowerCase();
-        if (v && !/^#[0-9a-f]{6}$/.test(v)) { fail('Kode warna tidak valid (contoh: #0e8a6f).'); }
+        if (v && !/^#[0-9a-f]{6}$/.test(v)) { fail('Kode warna tidak valid (contoh: #1f6f43).'); }
         set['theme_' + k] = v;
       });
     }
@@ -1361,7 +1358,7 @@ function createBackend_(P) {
   };
 }
 
-/* Kasirku - Demo.js: platform "memori" (dipakai demo di browser & pengujian). Hanya untuk demo; versi XAMPP memakai api.php + MySQL. */
+/* PinaPos - Demo.js: platform "memori" (dipakai demo di browser & pengujian). Hanya untuk demo; versi XAMPP memakai api.php + MySQL. */
 
 function sha256Hex_(msg) {
   var utf8 = unescape(encodeURIComponent(msg));
@@ -1498,7 +1495,7 @@ function seedDemo_(backend, P, logo) {
   });
 
   var set = {
-    store_name: 'Kasirku', store_address: '', store_phone: '', store_email: '', tax_no: '',
+    store_name: 'PinaPos', store_address: '', store_phone: '', store_email: '', tax_no: '',
     bank_name: '', bank_account: '', bank_holder: '',
     tax_rate: '0', paper_width: '80', receipt_footer: 'Terima kasih atas kepercayaan Anda.', show_logo_on_receipt: '1', auto_print: '0', inv_code: '200'
   };
@@ -1602,7 +1599,7 @@ function seedDemo_(backend, P, logo) {
   db.kvWrite({ inv_year: yyNow, inv_next: String((counters[yyNow] || 0) + 1) }, []);
 }
 
-var mem = null, KEY = 'kasirku_demo_v2';
+var mem = null, KEY = 'pinapos_demo_v1';
 var storage = { get: function () { try { return localStorage.getItem(KEY); } catch (e) { return mem; } }, set: function (s) { try { localStorage.setItem(KEY, s); } catch (e) { mem = s; } }, clear: function () { try { localStorage.removeItem(KEY); } catch (e) { mem = null; } } };
 return createDemoBackend(storage, "");
 })();
@@ -1612,7 +1609,7 @@ window.KASIRKU_DEMO.offline = false;
 <script>
 'use strict';
 /* =====================================================================
-   Kasirku - antarmuka. Satu file ini berjalan di dua mode:
+   PinaPos - antarmuka. Satu file ini berjalan di dua mode:
    - XAMPP / hosting : memanggil server PHP lewat fetch("api.php")
    - Demo            : memakai backend contoh di browser (window.KASIRKU_DEMO)
    Mode offline: bila server/MySQL tidak terjangkau, kasir tetap bisa berjualan.
@@ -1641,9 +1638,10 @@ const ROLE = { admin: 'Kasir Admin', kasir: 'Kasir' };
    WARNA TEMA PILIHAN PENGGUNA (menu Pengaturan → Warna tema)
    Empat warna dasar; turunan (gradien, latar lembut, versi gelap) dihitung otomatis.
    ===================================================================== */
-const THEME_DEFAULT = { brand: '#0e8a6f', accent: '#ff8a3d', pay: '#f2711c', bar: '#0f2a24' };
+const THEME_DEFAULT = { brand: '#1f6f43', accent: '#f2b705', pay: '#f2b705', bar: '#173a2a' };
 const THEME_PRESETS = [
-  ['Tosca (bawaan)', THEME_DEFAULT],
+  ['Nanas (bawaan)', THEME_DEFAULT],
+  ['Tosca', { brand: '#0e8a6f', accent: '#ff8a3d', pay: '#f2711c', bar: '#0f2a24' }],
   ['Samudra', { brand: '#1d6fd8', accent: '#22c3ee', pay: '#f59e0b', bar: '#0c1f3a' }],
   ['Anggur', { brand: '#7c3aed', accent: '#ec4899', pay: '#db2777', bar: '#1e1033' }],
   ['Bata', { brand: '#c2410c', accent: '#f59e0b', pay: '#16a34a', bar: '#2a1409' }],
@@ -1983,7 +1981,7 @@ function printDoc(html, pageCss) {
     const css = $$('style').filter(x => x.id !== 'pageStyle').map(x => x.textContent).join('\n');
     const doc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css +
       '\n@page{' + pageCss + '} html,body{display:block!important;min-height:0!important;height:auto!important;margin:0!important;padding:0!important;background:#fff!important;overflow:visible!important}</style></head><body>' + html + '</body></html>';
-    try { ANDROID.print(doc, 'Kasirku'); } catch (e) { toast('Tidak dapat membuka layanan cetak: ' + e.message, 'err'); }
+    try { ANDROID.print(doc, 'PinaPos'); } catch (e) { toast('Tidak dapat membuka layanan cetak: ' + e.message, 'err'); }
     return;
   }
   if (PRN.mode() !== 'browser' && /class="receipt\b/.test(html)) { return printThermalHtml(html, /class="receipt w58\b/.test(html) ? 58 : 80); }
@@ -2017,7 +2015,7 @@ function printDoc(html, pageCss) {
 /* ---------- pengaturan yang dipakai banyak tempat ---------- */
 const ST = () => S.settings || {};
 function brandHtml() {
-  const s = ST(), name = s.store_name || 'Kasirku';
+  const s = ST(), name = s.store_name || 'PinaPos';
   const ini = (() => { const w = (name.match(/[\p{L}\p{N}]+/gu) || []); if (!w.length) { return 'POS'; } if (w[0].length <= 4 && w[0] === w[0].toUpperCase()) { return w[0]; } return (w[0][0] + (w[1] ? w[1][0] : '')).toUpperCase(); })();
   return '<div class="brand">' + (LOGO() ? '<img class="brand-logo" src="' + esc(LOGO()) + '" alt="">' : '<span class="brand-mark">' + esc(ini) + '</span>') +
     '<span class="brand-name"><b>' + esc(name) + '</b><small>Point of Sale</small></span></div>';
@@ -2479,7 +2477,7 @@ function invoiceHtml(t) {
     (t.method === 'cash' && t.change > 0 ? '<div class="row"><span>Change:</span><span>' + rpi(t.change) + '</span></div>' : '') +
     '<div class="row b"><span>Amount due:</span><span>' + rpi(Math.max(0, t.grand_total - paid)) + '</span></div></div>' +
     '<div class="inv-sign"><div>Hormat kami,</div><div class="sp"></div><div class="nm">' + esc(t.cashier) + '</div></div></div>' +
-    '<div class="inv-foot"><span>Created with Kasirku</span><span>' + (lines.length <= 9 ? 'Page 1' : '') + '</span></div></div>';
+    '<div class="inv-foot"><span>Created with PinaPos</span><span>' + (lines.length <= 9 ? 'Page 1' : '') + '</span></div></div>';
 }
 async function showInvoice(id) {
   const t = await api('invoiceGet', { id });
@@ -2553,7 +2551,7 @@ function showLogin(msg) {
   S.token = null; S.user = null; store.del('ksr_tok'); document.body.classList.remove('has-bnav', 'is-kasir', 'cart-on');
   modals.slice().forEach(m => m.close());
   $('#app').hidden = true; $('#app').innerHTML = ''; $('#login').hidden = false;
-  $('#login').innerHTML = '<div class="login-wrap"><aside class="login-hero"><div class="lh-top"><span class="brand-mark">K</span><b id="lhName">Kasirku</b></div>' +
+  $('#login').innerHTML = '<div class="login-wrap"><aside class="login-hero"><div class="lh-top"><span class="lh-mark"><svg viewBox="0 0 100 162" aria-hidden="true"><path d="M50 60 C37 55 26 44 19.1 23.6 C34 27 46 38 50 60Z" fill="#CDEFD2"/><path d="M50 60 C63 55 74 44 80.9 23.6 C66 27 54 38 50 60Z" fill="#CDEFD2"/><path d="M50 2 C59 16 59 40 50 62 C41 40 41 16 50 2Z" fill="#9FD9A8"/><path d="M50 60 H57.5 A21.5 36.45 0 0 1 57.5 132.9 H50" fill="none" stroke="#F2B705" stroke-width="8" stroke-linejoin="round"/><path d="M50 60 H42.5 A21.5 36.45 0 0 0 42.5 132.9 H50" fill="none" stroke="#F2B705" stroke-width="8" stroke-linejoin="round"/><rect x="46" y="56" width="8" height="90" rx="4" fill="#F2B705"/><path d="M64.5 80 L68 84.5 L64.5 89 L61 84.5Z M35.5 80 L39 84.5 L35.5 89 L32 84.5Z M64.5 104 L68 108.5 L64.5 113 L61 108.5Z M35.5 104 L39 108.5 L35.5 113 L32 108.5Z" fill="#F2B705"/><path d="M9 132 C16 150 32 156 50 156 C68 156 84 150 91 132" fill="none" stroke="#9FD9A8" stroke-width="11" stroke-linecap="round"/></svg></span><b id="lhName">PinaPos</b></div>' +
     '<h2>Jualan lancar, <em>online maupun offline.</em></h2>' +
     '<ul><li><i>✓</i><div><b>Tetap jalan tanpa internet</b><span>Transaksi disimpan lalu dikirim otomatis.</span></div></li>' +
     '<li><i>▤</i><div><b>Struk & invoice A4</b><span>Kertas 58/80 mm atau simpan sebagai PDF.</span></div></li>' +
@@ -3063,7 +3061,7 @@ function barChart(data, h) {
     g += '<rect class="bar' + (i === n - 1 ? ' last' : '') + '" x="' + x.toFixed(1) + '" y="' + (T + ph - bh).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(bh, d.sales ? 1 : 0).toFixed(1) + '" rx="2"><title>' + dmy(d.date) + ': ' + rp(d.sales) + (d.tx !== undefined ? ' · ' + d.tx + ' transaksi' : '') + '</title></rect>';
     if (i % step === 0) { g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="middle">' + dshort(d.date) + '</text>'; }
   });
-  return '<svg class="chart" viewBox="0 0 ' + W + ' ' + h + '" role="img" aria-label="Grafik penjualan per hari"><defs><linearGradient id="gBar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--brand-2)"/><stop offset="1" style="stop-color:var(--brand)"/></linearGradient><linearGradient id="gBarA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--accent-2)"/><stop offset="1" style="stop-color:var(--accent)"/></linearGradient></defs>' + g + '</svg>';
+  return '<svg class="chart" viewBox="0 0 ' + W + ' ' + h + '" role="img" aria-label="Grafik penjualan per hari">' + g + '</svg>';
 }
 
 /* ================= DASHBOARD ================= */
@@ -3459,7 +3457,7 @@ function themeCardHtml() {
     THEME_PRESETS.map((p, i) => '<button type="button" class="th-preset" data-i="' + i + '"><span class="th-sw"><i style="background:' + p[1].brand + '"></i><i style="background:' + p[1].accent + '"></i><i style="background:' + p[1].pay + '"></i><i style="background:' + p[1].bar + '"></i></span>' + esc(p[0]) + '</button>').join('') + '</div>' +
     '<div class="field-label" style="margin-top:16px">Atau atur sendiri</div><div class="th-colors" style="margin-top:0">' +
     colors.map(c => '<label class="th-color"><span>' + c[1] + '</span><div class="row"><input type="color" id="thc_' + c[0] + '" data-k="' + c[0] + '" aria-label="' + c[1] + '"><input type="text" id="tht_' + c[0] + '" data-k="' + c[0] + '" maxlength="7" spellcheck="false" aria-label="Kode warna ' + c[1] + '"></div><small>' + c[2] + '</small></label>').join('') + '</div>' +
-    '<div class="th-prev" aria-label="Pratinjau warna"><div class="bar"><span class="brand-mark">K</span><b>' + esc(ST().store_name || 'Kasirku') + '</b><span class="grow"></span><span class="net"><i></i>Online</span></div>' +
+    '<div class="th-prev" aria-label="Pratinjau warna"><div class="bar"><span class="brand-mark">P</span><b>' + esc(ST().store_name || 'PinaPos') + '</b><span class="grow"></span><span class="net"><i></i>Online</span></div>' +
     '<div class="col"><div class="chips"><span class="chip" aria-pressed="true">Semua</span><span class="chip"><span class="dot" style="--h:190"></span>Minuman</span></div><div><button type="button" class="btn btn-primary btn-sm" tabindex="-1">Tombol utama</button> <span class="badge brand">Label</span></div></div>' +
     '<div class="col"><div class="lcd"><span>TOTAL</span><strong>Rp 125.000</strong></div><span class="pay-btn" style="display:grid;place-items:center">BAYAR</span></div></div>' +
     '<div class="actions" style="margin-top:14px;justify-content:flex-end"><button type="button" class="btn" data-act="thReset">Kembalikan warna bawaan</button><button type="button" class="btn btn-primary" data-act="thSave">Simpan warna</button></div>' +
@@ -3598,7 +3596,7 @@ function backupCardHtml() {
     '<label class="btn" style="cursor:pointer">Pulihkan dari file<input type="file" id="bkFile" accept="application/json,.json" data-chg="restorePick" hidden></label></div>' +
     '<p class="muted" style="margin:10px 0 0;font-size:13px">Pulihkan akan <b>mengganti</b> seluruh data di HP ini dengan isi file backup.</p></div></div>';
 }
-function backupName() { const d = new Date(Date.now() + 7 * 3600e3).toISOString(); return 'kasirku-backup-' + d.slice(0, 10) + '-' + d.slice(11, 16).replace(':', '') + '.json'; }
+function backupName() { const d = new Date(Date.now() + 7 * 3600e3).toISOString(); return 'pinapos-backup-' + d.slice(0, 10) + '-' + d.slice(11, 16).replace(':', '') + '.json'; }
 window.ksrSaved = (ok, msg) => {
   if (ok) { store.set('ksr_lastbackup', String(Date.now())); store.del('ksr_bkdirty'); toast('Backup tersimpan: ' + msg, 'ok'); renderBanner(); if (S.view === 'pengaturan') { viewPengaturan(); } }
   else if (msg) { toast(msg, msg === 'Dibatalkan' ? '' : 'err'); }
@@ -3622,8 +3620,8 @@ Object.assign(CHG, {
     const f = t.files[0]; t.value = ''; if (!f) { return; }
     const rd = new FileReader();
     rd.onload = async () => {
-      let b; try { b = JSON.parse(rd.result); } catch (e) { toast('File tidak dapat dibaca. Pilih file backup Kasirku (.json).', 'err'); return; }
-      if (!b || b.app !== 'kasirku') { toast('File ini bukan backup Kasirku.', 'err'); return; }
+      let b; try { b = JSON.parse(rd.result); } catch (e) { toast('File tidak dapat dibaca. Pilih file backup PinaPos (.json).', 'err'); return; }
+      if (!b || b.app !== 'kasirku') { toast('File ini bukan backup PinaPos.', 'err'); return; }
       const n = b.tables && b.tables.Transactions ? b.tables.Transactions.length : 0;
       const ok = await confirmBox({ title: 'Pulihkan data?', message: 'Seluruh data di HP ini akan <b>diganti</b> dengan isi backup' + (b.exported_at ? ' tanggal ' + esc(new Date(b.exported_at).toLocaleString('id-ID')) : '') + ' (' + int(n) + ' transaksi). Tindakan ini tidak dapat dibatalkan.', ok: 'Pulihkan', danger: true });
       if (!ok) { return; }
