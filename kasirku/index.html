@@ -547,6 +547,9 @@ input[type=text],input[type=password],input[type=number],input[type=email],input
 .th-prev{ display:grid; grid-template-columns:1.2fr 1fr; gap:12px; margin-top:16px; padding:12px; border-radius:16px; background:var(--bg); border:1px dashed var(--line); }
 @media (max-width:640px){ .th-prev{ grid-template-columns:1fr; } }
 .th-prev .bar{ grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:10px 12px; color:var(--bar-ink); border-radius:12px; background:var(--bar); }
+
+.brand-mark.brand-pina{ min-width:0; padding:0; background:none; box-shadow:none; } .brand-mark.brand-pina svg{ display:block; height:40px; width:auto; }
+.th-prev .bar .brand-mark.brand-pina svg{ height:30px; }
 .th-prev .bar .brand-mark{ min-width:30px; height:30px; font-size:13px; border-radius:9px; }
 .th-prev .bar b{ font-size:14px; } .th-prev .bar .grow{ flex:1; }
 .th-prev .bar .net{ min-height:26px; font-size:11px; padding:0 9px; }
@@ -2023,11 +2026,13 @@ const ST = () => S.settings || {};
 function brandHtml() {
   const s = ST(), name = s.store_name || 'PinaPos';
   const ini = (() => { const w = (name.match(/[\p{L}\p{N}]+/gu) || []); if (!w.length) { return 'POS'; } if (w[0].length <= 4 && w[0] === w[0].toUpperCase()) { return w[0]; } return (w[0][0] + (w[1] ? w[1][0] : '')).toUpperCase(); })();
-  return '<div class="brand">' + (LOGO() ? '<img class="brand-logo" src="' + esc(LOGO()) + '" alt="">' : '<span class="brand-mark">' + esc(ini) + '</span>') +
+  return '<div class="brand">' + (LOGO() ? '<img class="brand-logo" src="' + esc(LOGO()) + '" alt="">' : '<span class="brand-mark brand-pina" title="PinaPos">' + PINA_MARK + '</span>') +
     '<span class="brand-name"><b>' + esc(name) + '</b><small>Point of Sale</small></span></div>';
 }
 
 /* ---------- struk thermal ---------- */
+/** Logo PinaPos berwarna untuk bilah atas (dipakai bila toko belum memasang logo sendiri). */
+const PINA_MARK = '<svg viewBox="0 0 100 162" aria-hidden="true"><path d="M50 60 C37 55 26 44 19.1 23.6 C34 27 46 38 50 60Z" fill="#CDEFD2"/><path d="M50 60 C63 55 74 44 80.9 23.6 C66 27 54 38 50 60Z" fill="#CDEFD2"/><path d="M50 2 C59 16 59 40 50 62 C41 40 41 16 50 2Z" fill="#9FD9A8"/><path d="M50 60 H57.5 A21.5 36.45 0 0 1 57.5 132.9 H50" fill="none" stroke="#F2B705" stroke-width="8" stroke-linejoin="round"/><path d="M50 60 H42.5 A21.5 36.45 0 0 0 42.5 132.9 H50" fill="none" stroke="#F2B705" stroke-width="8" stroke-linejoin="round"/><rect x="46" y="56" width="8" height="90" rx="4" fill="#F2B705"/><path d="M64.5 80 L68 84.5 L64.5 89 L61 84.5Z M35.5 80 L39 84.5 L35.5 89 L32 84.5Z M64.5 104 L68 108.5 L64.5 113 L61 108.5Z M35.5 104 L39 108.5 L35.5 113 L32 108.5Z" fill="#F2B705"/><path d="M9 132 C16 150 32 156 50 156 C68 156 84 150 91 132" fill="none" stroke="#9FD9A8" stroke-width="11" stroke-linecap="round"/></svg>';
 /** Logo PinaPos hitam-putih untuk kaki struk (aman untuk printer thermal). */
 const PINAPOS_RECEIPT_LOGO = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="324" viewBox="0 0 100 162"><rect width="100" height="162" fill="#fff"/><path d="M50 60 C37 55 26 44 19.1 23.6 C34 27 46 38 50 60Z M50 60 C63 55 74 44 80.9 23.6 C66 27 54 38 50 60Z M50 2 C59 16 59 40 50 62 C41 40 41 16 50 2Z" fill="#000"/><path d="M50 60 H57.5 A21.5 36.45 0 0 1 57.5 132.9 H50" fill="#fff" stroke="#000" stroke-width="8" stroke-linejoin="round"/><path d="M50 60 H42.5 A21.5 36.45 0 0 0 42.5 132.9 H50" fill="#fff" stroke="#000" stroke-width="8" stroke-linejoin="round"/><rect x="46" y="56" width="8" height="90" rx="4" fill="#000"/><path d="M64.5 80 L68 84.5 L64.5 89 L61 84.5Z M35.5 80 L39 84.5 L35.5 89 L32 84.5Z M64.5 104 L68 108.5 L64.5 113 L61 108.5Z M35.5 104 L39 108.5 L35.5 113 L32 108.5Z" fill="#000"/><path d="M9 132 C16 150 32 156 50 156 C68 156 84 150 91 132" fill="none" stroke="#000" stroke-width="11" stroke-linecap="round"/></svg>');
 const receiptBrand = () => '<div class="r-brand"><img class="r-brandlogo" src="' + PINAPOS_RECEIPT_LOGO + '" alt="PinaPos"><div class="r-center r-powered">PinaPos · Support UMKM</div><div class="r-center r-powered">Powered by ASKER</div></div>';
@@ -3466,7 +3471,7 @@ function themeCardHtml() {
     THEME_PRESETS.map((p, i) => '<button type="button" class="th-preset" data-i="' + i + '"><span class="th-sw"><i style="background:' + p[1].brand + '"></i><i style="background:' + p[1].accent + '"></i><i style="background:' + p[1].pay + '"></i><i style="background:' + p[1].bar + '"></i></span>' + esc(p[0]) + '</button>').join('') + '</div>' +
     '<div class="field-label" style="margin-top:16px">Atau atur sendiri</div><div class="th-colors" style="margin-top:0">' +
     colors.map(c => '<label class="th-color"><span>' + c[1] + '</span><div class="row"><input type="color" id="thc_' + c[0] + '" data-k="' + c[0] + '" aria-label="' + c[1] + '"><input type="text" id="tht_' + c[0] + '" data-k="' + c[0] + '" maxlength="7" spellcheck="false" aria-label="Kode warna ' + c[1] + '"></div><small>' + c[2] + '</small></label>').join('') + '</div>' +
-    '<div class="th-prev" aria-label="Pratinjau warna"><div class="bar"><span class="brand-mark">P</span><b>' + esc(ST().store_name || 'PinaPos') + '</b><span class="grow"></span><span class="net"><i></i>Online</span></div>' +
+    '<div class="th-prev" aria-label="Pratinjau warna"><div class="bar"><span class="brand-mark brand-pina">' + PINA_MARK + '</span><b>' + esc(ST().store_name || 'PinaPos') + '</b><span class="grow"></span><span class="net"><i></i>Online</span></div>' +
     '<div class="col"><div class="chips"><span class="chip" aria-pressed="true">Semua</span><span class="chip"><span class="dot" style="--h:190"></span>Minuman</span></div><div><button type="button" class="btn btn-primary btn-sm" tabindex="-1">Tombol utama</button> <span class="badge brand">Label</span></div></div>' +
     '<div class="col"><div class="lcd"><span>TOTAL</span><strong>Rp 125.000</strong></div><span class="pay-btn" style="display:grid;place-items:center">BAYAR</span></div></div>' +
     '<div class="actions" style="margin-top:14px;justify-content:flex-end"><button type="button" class="btn" data-act="thReset">Kembalikan warna bawaan</button><button type="button" class="btn btn-primary" data-act="thSave">Simpan warna</button></div>' +
