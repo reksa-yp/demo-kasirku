@@ -294,6 +294,8 @@ table.t{ width:100%; border-collapse:collapse; font-size:14px; }
 .receipt.w80{ width:72mm; } .receipt.w58{ width:48mm; font-size:11px; }
 .receipt .r-center{ text-align:center; } .receipt .r-store{ font-size:1.25em; font-weight:700; }
 .receipt .r-logo{ display:block; max-width:60%; max-height:18mm; margin:0 auto 4px; object-fit:contain; filter:grayscale(1) contrast(1.5); }
+
+.receipt .r-logo.r-logo-pina{ max-height:16mm; filter:none; }
 .receipt .r-brand{ margin-top:8px; } .receipt .r-brandlogo{ display:block; width:9mm; height:auto; margin:0 auto 2px; } .receipt .r-powered{ font-size:.85em; }
 .receipt .r-sep{ margin:6px 0; border:0; border-top:1px dashed #000; } .receipt .r-sep.solid{ border-top-style:solid; }
 .receipt .r-row{ display:flex; justify-content:space-between; gap:8px; } .receipt .r-row > span:last-child{ text-align:right; white-space:nowrap; }
@@ -2035,13 +2037,15 @@ function brandHtml() {
 const PINA_MARK = '<svg viewBox="0 0 100 162" aria-hidden="true"><path d="M50 60 C37 55 26 44 19.1 23.6 C34 27 46 38 50 60Z" fill="#CDEFD2"/><path d="M50 60 C63 55 74 44 80.9 23.6 C66 27 54 38 50 60Z" fill="#CDEFD2"/><path d="M50 2 C59 16 59 40 50 62 C41 40 41 16 50 2Z" fill="#9FD9A8"/><path d="M50 60 H57.5 A21.5 36.45 0 0 1 57.5 132.9 H50" fill="none" stroke="#F2B705" stroke-width="8" stroke-linejoin="round"/><path d="M50 60 H42.5 A21.5 36.45 0 0 0 42.5 132.9 H50" fill="none" stroke="#F2B705" stroke-width="8" stroke-linejoin="round"/><rect x="46" y="56" width="8" height="90" rx="4" fill="#F2B705"/><path d="M64.5 80 L68 84.5 L64.5 89 L61 84.5Z M35.5 80 L39 84.5 L35.5 89 L32 84.5Z M64.5 104 L68 108.5 L64.5 113 L61 108.5Z M35.5 104 L39 108.5 L35.5 113 L32 108.5Z" fill="#F2B705"/><path d="M9 132 C16 150 32 156 50 156 C68 156 84 150 91 132" fill="none" stroke="#9FD9A8" stroke-width="11" stroke-linecap="round"/></svg>';
 /** Logo PinaPos hitam-putih untuk kaki struk (aman untuk printer thermal). */
 const PINAPOS_RECEIPT_LOGO = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="324" viewBox="0 0 100 162"><rect width="100" height="162" fill="#fff"/><path d="M50 60 C37 55 26 44 19.1 23.6 C34 27 46 38 50 60Z M50 60 C63 55 74 44 80.9 23.6 C66 27 54 38 50 60Z M50 2 C59 16 59 40 50 62 C41 40 41 16 50 2Z" fill="#000"/><path d="M50 60 H57.5 A21.5 36.45 0 0 1 57.5 132.9 H50" fill="#fff" stroke="#000" stroke-width="8" stroke-linejoin="round"/><path d="M50 60 H42.5 A21.5 36.45 0 0 0 42.5 132.9 H50" fill="#fff" stroke="#000" stroke-width="8" stroke-linejoin="round"/><rect x="46" y="56" width="8" height="90" rx="4" fill="#000"/><path d="M64.5 80 L68 84.5 L64.5 89 L61 84.5Z M35.5 80 L39 84.5 L35.5 89 L32 84.5Z M64.5 104 L68 108.5 L64.5 113 L61 108.5Z M35.5 104 L39 108.5 L35.5 113 L32 108.5Z" fill="#000"/><path d="M9 132 C16 150 32 156 50 156 C68 156 84 150 91 132" fill="none" stroke="#000" stroke-width="11" stroke-linecap="round"/></svg>');
-const receiptBrand = () => '<div class="r-brand"><img class="r-brandlogo" src="' + PINAPOS_RECEIPT_LOGO + '" alt="PinaPos"><div class="r-center r-powered">PinaPos · Support UMKM</div><div class="r-center r-powered">Powered by ASKER</div></div>';
+const receiptBrand = (noLogo) => '<div class="r-brand">' + (noLogo ? '' : '<img class="r-brandlogo" src="' + PINAPOS_RECEIPT_LOGO + '" alt="PinaPos">') + '<div class="r-center r-powered">PinaPos · Support UMKM</div><div class="r-center r-powered">Powered by ASKER</div></div>';
 function receiptHtml(t, width) {
   const s = ST();
+  // Mode demo: toko belum punya logo, jadi kepala struk memakai logo PinaPos.
+  const demoLogo = IS_DEMO && s.show_logo_on_receipt && !LOGO();
   const row = (l, r, cls) => '<div class="r-row' + (cls ? ' ' + cls : '') + '"><span>' + l + '</span><span>' + r + '</span></div>';
   const items = t.items.map(i => '<div class="r-item"><div class="r-name">' + esc(i.name) + '</div>' + row(int(i.qty) + ' x ' + int(i.price), int(i.subtotal)) + '</div>').join('');
   let h = '<div class="receipt ' + (width === 58 ? 'w58' : 'w80') + '">' +
-    (s.show_logo_on_receipt && LOGO() ? '<img class="r-logo" src="' + esc(LOGO()) + '" alt="">' : '') +
+    (s.show_logo_on_receipt && LOGO() ? '<img class="r-logo" src="' + esc(LOGO()) + '" alt="">' : (demoLogo ? '<img class="r-logo r-logo-pina" src="' + PINAPOS_RECEIPT_LOGO + '" alt="PinaPos">' : '')) +
     '<div class="r-center r-store">' + esc(s.store_name) + '</div>' +
     (s.store_address ? '<div class="r-center pre">' + esc(s.store_address) + '</div>' : '') +
     (s.store_phone ? '<div class="r-center">Telp. ' + esc(s.store_phone) + '</div>' : '') +
@@ -2052,7 +2056,7 @@ function receiptHtml(t, width) {
   h += '<hr class="r-sep solid">' + row('TOTAL', int(t.grand_total), 'r-total') + '<hr class="r-sep">' +
     row('Bayar (' + esc(PAY[t.method] || t.method) + ')', int(t.amount_paid));
   if (t.method === 'cash') { h += row('Kembali', int(t.change)); }
-  return h + '<hr class="r-sep"><div class="r-center">' + esc(s.receipt_footer) + '</div>' + receiptBrand() + '</div>';
+  return h + '<hr class="r-sep"><div class="r-center">' + esc(s.receipt_footer) + '</div>' + receiptBrand(demoLogo) + '</div>';
 }
 function printReceipt(t) { printDoc(receiptHtml(t, S.paper), 'size:' + S.paper + 'mm auto;margin:0'); }
 /** Pilih ukuran kertas (58mm/80mm) dengan preview dahulu sebelum struk dicetak. */
