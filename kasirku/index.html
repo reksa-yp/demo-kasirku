@@ -289,6 +289,7 @@ table.t{ width:100%; border-collapse:collapse; font-size:14px; }
 .receipt.w80{ width:72mm; } .receipt.w58{ width:48mm; font-size:11px; }
 .receipt .r-center{ text-align:center; } .receipt .r-store{ font-size:1.25em; font-weight:700; }
 .receipt .r-logo{ display:block; max-width:60%; max-height:18mm; margin:0 auto 4px; object-fit:contain; filter:grayscale(1) contrast(1.5); }
+.receipt .r-brand{ margin-top:8px; } .receipt .r-brandlogo{ display:block; width:9mm; height:auto; margin:0 auto 2px; } .receipt .r-powered{ font-size:.85em; }
 .receipt .r-sep{ margin:6px 0; border:0; border-top:1px dashed #000; } .receipt .r-sep.solid{ border-top-style:solid; }
 .receipt .r-row{ display:flex; justify-content:space-between; gap:8px; } .receipt .r-row > span:last-child{ text-align:right; white-space:nowrap; }
 .receipt .r-name{ font-weight:700; overflow-wrap:anywhere; } .receipt .r-item{ margin-bottom:3px; } .receipt .r-total{ font-size:1.2em; font-weight:700; } .receipt .pre{ white-space:pre-line; }
@@ -2022,6 +2023,9 @@ function brandHtml() {
 }
 
 /* ---------- struk thermal ---------- */
+/** Logo PinaPos hitam-putih untuk kaki struk (aman untuk printer thermal). */
+const PINAPOS_RECEIPT_LOGO = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="324" viewBox="0 0 100 162"><rect width="100" height="162" fill="#fff"/><path d="M50 60 C37 55 26 44 19.1 23.6 C34 27 46 38 50 60Z M50 60 C63 55 74 44 80.9 23.6 C66 27 54 38 50 60Z M50 2 C59 16 59 40 50 62 C41 40 41 16 50 2Z" fill="#000"/><path d="M50 60 H57.5 A21.5 36.45 0 0 1 57.5 132.9 H50" fill="#fff" stroke="#000" stroke-width="8" stroke-linejoin="round"/><path d="M50 60 H42.5 A21.5 36.45 0 0 0 42.5 132.9 H50" fill="#fff" stroke="#000" stroke-width="8" stroke-linejoin="round"/><rect x="46" y="56" width="8" height="90" rx="4" fill="#000"/><path d="M64.5 80 L68 84.5 L64.5 89 L61 84.5Z M35.5 80 L39 84.5 L35.5 89 L32 84.5Z M64.5 104 L68 108.5 L64.5 113 L61 108.5Z M35.5 104 L39 108.5 L35.5 113 L32 108.5Z" fill="#000"/><path d="M9 132 C16 150 32 156 50 156 C68 156 84 150 91 132" fill="none" stroke="#000" stroke-width="11" stroke-linecap="round"/></svg>');
+const receiptBrand = () => '<div class="r-brand"><img class="r-brandlogo" src="' + PINAPOS_RECEIPT_LOGO + '" alt="PinaPos"><div class="r-center r-powered">PinaPos · Support UMKM</div></div>';
 function receiptHtml(t, width) {
   const s = ST();
   const row = (l, r, cls) => '<div class="r-row' + (cls ? ' ' + cls : '') + '"><span>' + l + '</span><span>' + r + '</span></div>';
@@ -2038,7 +2042,7 @@ function receiptHtml(t, width) {
   h += '<hr class="r-sep solid">' + row('TOTAL', int(t.grand_total), 'r-total') + '<hr class="r-sep">' +
     row('Bayar (' + esc(PAY[t.method] || t.method) + ')', int(t.amount_paid));
   if (t.method === 'cash') { h += row('Kembali', int(t.change)); }
-  return h + '<hr class="r-sep"><div class="r-center">' + esc(s.receipt_footer) + '</div></div>';
+  return h + '<hr class="r-sep"><div class="r-center">' + esc(s.receipt_footer) + '</div>' + receiptBrand() + '</div>';
 }
 function printReceipt(t) { printDoc(receiptHtml(t, S.paper), 'size:' + S.paper + 'mm auto;margin:0'); }
 /** Pilih ukuran kertas (58mm/80mm) dengan preview dahulu sebelum struk dicetak. */
@@ -2134,12 +2138,12 @@ class EscPos {
     return this.raw(10).left();
   }
   /** Cetak logo sebagai gambar raster hitam-putih (dithering). Gagal = dilewati. */
-  async logo(src) {
+  async logo(src, frac) {
     try {
       const img = await loadImg(src);
       const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
       if (!iw || !ih) { return this; }
-      let w = Math.min(Math.round(this.dots * 0.6), iw), h = Math.round(w * ih / iw);
+      let w = Math.min(Math.round(this.dots * (frac || 0.6)), iw), h = Math.round(w * ih / iw);
       const maxH = Math.round(this.dots * 0.4);
       if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
       w = Math.max(8, w); h = Math.max(1, h);
@@ -2178,7 +2182,7 @@ async function escFromReceiptHtml(html, paper) {
   const walk = async (el, inCenter) => {
     for (const n of Array.from(el.children)) {
       const cl = n.classList, tag = n.tagName.toLowerCase();
-      if (tag === 'img') { if (cl.contains('r-logo') && PRN.logo()) { await p.logo(n.getAttribute('src')); } continue; }
+      if (tag === 'img') { if (cl.contains('r-brandlogo')) { await p.logo(n.getAttribute('src'), 0.16); } else if (cl.contains('r-logo') && PRN.logo()) { await p.logo(n.getAttribute('src')); } continue; }
       if (tag === 'hr') { p.left().sep(cl.contains('solid') ? '=' : '-'); continue; }
       if (tag === 'svg') { p.barcode((n.getAttribute('aria-label') || '').replace(/^barcode\s*/i, '')); continue; }
       if (cl.contains('sr-barcode-text')) { continue; }
