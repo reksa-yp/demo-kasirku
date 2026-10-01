@@ -8,3 +8,7 @@ Demo langsung di browser (GitHub Pages), tanpa server:
 Akun demo: `admin` / `admin123` · `kasir1` / `kasir123`.
 Data contoh fiktif dan hanya tersimpan di browser pengunjung.
 ..
+
+---
+
+© 2026 ASKER. All rights reserved. PinaPos dan CuciAja — Powered by ASKER.
