@@ -1,0 +1,68 @@
+# PinaPos — Copyright (c) 2026 ASKER. All rights reserved.
+# Membangun APK Android PinaPos (offline) lalu menerbitkannya di halaman Releases.
+name: Build APK PinaPos
+
+on:
+  push:
+    branches: [main, android-apk]
+    paths:
+      - 'android/**'
+      - 'kasirku/**'
+      - 'assets/**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Salin aplikasi web ke dalam APK
+        run: |
+          mkdir -p android/app/src/main/assets/www
+          cp -r kasirku assets android/app/src/main/assets/www/
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          gradle --no-daemon assembleDebug
+
+      - name: Beri nama file
+        run: |
+          VER=$(grep versionName android/app/build.gradle | sed -E "s/.*'(.*)'.*/\1/")
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "PinaPos-$VER.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PinaPos-${{ env.VER }}
+          path: PinaPos-${{ env.VER }}.apk
+
+      - name: Terbitkan di Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-v${{ env.VER }}
+          name: PinaPos ${{ env.VER }} (Android)
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            APK PinaPos untuk Android — berjalan offline tanpa server.
+            Pasang: unduh file .apk di bawah, buka, lalu izinkan "Instal dari sumber tidak dikenal".
+            Akun contoh: admin / admin123 · kasir1 / kasir123
+
+            © 2026 ASKER. Powered by ASKER.
+          files: PinaPos-${{ env.VER }}.apk
