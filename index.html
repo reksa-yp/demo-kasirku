@@ -38,7 +38,8 @@ h1{ margin:8px 0 12px; font-size:clamp(28px,5vw,42px); line-height:1.12; letter-
 .app li{ display:flex; gap:10px; } .app li::before{ content:'✓'; flex:none; font-weight:800; color:var(--c); }
 .btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:50px; margin-top:auto; padding:0 20px; font-weight:700; font-size:16px; color:#fff; text-decoration:none; background:var(--c); border-radius:14px; }
 .btn:hover{ filter:brightness(1.08); } .btn:focus-visible{ outline:3px solid var(--accent); outline-offset:2px; }
-.btn.dl{ margin-top:0; color:var(--ks); background:var(--ks-soft); }
+.btn.dl{ margin-top:0; color:var(--c); background:var(--soft); }
+.ca{ --soft:var(--ca-soft); } .ks{ --soft:var(--ks-soft); }
 .ca{ --c:var(--ca); } .ks{ --c:var(--ks); }
 .ca .tag{ background:var(--ca-soft); color:var(--ca); } .ks .tag{ background:var(--ks-soft); color:var(--ks); }
 .tag{ align-self:flex-start; padding:3px 10px; font-size:12px; font-weight:700; border-radius:999px; }
@@ -71,6 +72,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
       </ul>
       <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
       <a class="btn" href="cuciaja/">Coba demo CuciAja →</a>
+      <a class="btn dl" href="download/cuciaja/">⬇ Download APK Android (gratis)</a>
     </section>
 
     <section class="app ks">
