@@ -111,7 +111,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        web.addJavascriptInterface(new Bridge(), "KasirkuAndroid");
+        web.addJavascriptInterface(new Bridge(), BuildConfig.BRIDGE);   // KasirkuAndroid (PinaPos) / CuciAjaAndroid (CuciAja)
 
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
@@ -166,7 +166,7 @@ public class MainActivity extends Activity {
         web.post(() -> web.evaluateJavascript(js, null));
     }
 
-    /** Jembatan yang dipanggil dari halaman web (window.KasirkuAndroid). */
+    /** Jembatan yang dipanggil dari halaman web (window.KasirkuAndroid atau window.CuciAjaAndroid). */
     private class Bridge {
 
         /** Cetak dokumen HTML lewat layanan cetak Android (printer, RawBT, atau Simpan sebagai PDF). */
@@ -220,6 +220,12 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 notifySaved(false, "Gagal menyimpan: " + e.getMessage());
             }
+        }
+
+        /** Buka tautan luar (WhatsApp, Saweria, RawBT) di aplikasi lain. */
+        @JavascriptInterface
+        public void openExternal(final String url) {
+            runOnUiThread(() -> MainActivity.this.openExternal(url));
         }
 
         /** Samakan warna status bar dengan tema yang dipilih di aplikasi. */
