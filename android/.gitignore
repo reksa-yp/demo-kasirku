@@ -5,3 +5,5 @@ app/build/
 app/src/main/assets/www/
 *.iml
 .idea/
+app/src/pinapos/assets/
+app/src/cuciaja/assets/

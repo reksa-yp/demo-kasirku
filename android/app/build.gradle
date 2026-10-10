@@ -14,6 +14,31 @@ android {
         versionName '1.0.0'
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Satu pembungkus Android untuk dua aplikasi: PinaPos (kasir toko) dan CuciAja (kasir laundry)
+    flavorDimensions 'app'
+    productFlavors {
+        pinapos {
+            dimension 'app'
+            applicationId 'id.asker.pinapos'
+            resValue 'string', 'app_name', 'PinaPos'
+            buildConfigField 'String', 'APP_DIR', '"kasirku"'
+            buildConfigField 'String', 'APP_NAME', '"PinaPos"'
+            buildConfigField 'String', 'BRIDGE', '"KasirkuAndroid"'
+        }
+        cuciaja {
+            dimension 'app'
+            applicationId 'id.asker.cuciaja'
+            resValue 'string', 'app_name', 'CuciAja'
+            buildConfigField 'String', 'APP_DIR', '"cuciaja"'
+            buildConfigField 'String', 'APP_NAME', '"CuciAja"'
+            buildConfigField 'String', 'BRIDGE', '"CuciAjaAndroid"'
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17

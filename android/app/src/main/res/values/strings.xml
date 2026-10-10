@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PinaPos</string>
+    <!-- app_name diatur per aplikasi di app/build.gradle (productFlavors) -->
 </resources>

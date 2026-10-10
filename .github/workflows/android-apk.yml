@@ -1,5 +1,5 @@
 # PinaPos — Copyright (c) 2026 ASKER. All rights reserved.
-# Membangun APK Android PinaPos (offline) lalu menerbitkannya di halaman Releases.
+# Membangun APK Android PinaPos dan CuciAja (offline) lalu menerbitkannya di halaman Releases.
 name: Build APK PinaPos
 
 on:
@@ -8,6 +8,7 @@ on:
     paths:
       - 'android/**'
       - 'kasirku/**'
+      - 'cuciaja/**'
       - 'assets/**'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
@@ -32,27 +33,34 @@ jobs:
 
       - name: Salin aplikasi web ke dalam APK
         run: |
-          mkdir -p android/app/src/main/assets/www
-          cp -r kasirku assets android/app/src/main/assets/www/
+          # aset bersama di main, halaman aplikasi per flavor (APK hanya berisi aplikasinya sendiri)
+          mkdir -p android/app/src/main/assets/www android/app/src/pinapos/assets/www android/app/src/cuciaja/assets/www
+          cp -r assets android/app/src/main/assets/www/
+          cp -r kasirku android/app/src/pinapos/assets/www/
+          cp -r cuciaja android/app/src/cuciaja/assets/www/
 
       - name: Build APK
         working-directory: android
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          gradle --no-daemon assembleDebug
+          gradle --no-daemon assemblePinaposDebug assembleCuciajaDebug
 
       - name: Beri nama file
         run: |
           VER=$(grep versionName android/app/build.gradle | sed -E "s/.*'(.*)'.*/\1/")
           echo "VER=$VER" >> "$GITHUB_ENV"
-          cp android/app/build/outputs/apk/debug/app-debug.apk "PinaPos-$VER.apk"
+          cp android/app/build/outputs/apk/pinapos/debug/app-pinapos-debug.apk "PinaPos-$VER.apk"
+          cp android/app/build/outputs/apk/cuciaja/debug/app-cuciaja-debug.apk "CuciAja.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PinaPos-${{ env.VER }}
-          path: PinaPos-${{ env.VER }}.apk
+          name: APK-${{ env.VER }}
+          path: |
+            PinaPos-${{ env.VER }}.apk
+            CuciAja.apk
 
-      - name: Terbitkan di Releases
+      - name: Terbitkan PinaPos di Releases
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-v${{ env.VER }}
@@ -66,3 +74,23 @@ jobs:
 
             © 2026 ASKER. Powered by ASKER.
           files: PinaPos-${{ env.VER }}.apk
+
+      # CuciAja memakai satu rilis tetap (tag cuciaja-apk) yang file-nya diganti setiap build,
+      # sehingga link download langsung selalu sama:
+      # https://github.com/reksa-yp/demo-kasirku/releases/download/cuciaja-apk/CuciAja.apk
+      - name: Terbitkan CuciAja di Releases
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cuciaja-apk
+          name: CuciAja (Android)
+          target_commitish: ${{ github.sha }}
+          make_latest: false
+          overwrite_files: true
+          body: |
+            APK CuciAja untuk Android — kasir laundry yang berjalan offline tanpa server.
+            Pasang: unduh CuciAja.apk di bawah, buka, lalu izinkan "Instal dari sumber tidak dikenal".
+            Akun contoh: admin / admin123 · kasir1 / kasir123
+
+            © 2026 ASKER. Powered by ASKER.
+          files: CuciAja.apk
