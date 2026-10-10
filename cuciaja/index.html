@@ -2822,6 +2822,7 @@ document.addEventListener('input', e => { const t = e.target.closest('[data-inp]
 document.addEventListener('click', e => { if (!e.target.closest('.who')) { const m = $('#menu'); if (m && !m.hidden) { m.hidden = true; } } });
 
 const IC = {
+  support: '<path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   order: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>',
   cucian: '<rect x="4" y="2.5" width="16" height="19" rx="2.5"/><circle cx="12" cy="13" r="4.5"/><path d="M7.5 6.5h.01M10.5 6.5h3"/><path d="M9.5 13.5c1.2.8 3.8.8 5 0"/>',
@@ -2848,7 +2849,8 @@ const NAV = [
   { id: 'produk', label: 'Produk', g: 'Kelola', roles: ['admin'] },
   { id: 'pelanggan', label: 'Pelanggan', g: 'Kelola', roles: ['admin'] },
   { id: 'pengguna', label: 'Pengguna', g: 'Kelola', roles: ['admin'] },
-  { id: 'pengaturan', label: 'Pengaturan', g: 'Kelola', roles: ['admin'] }
+  { id: 'pengaturan', label: 'Pengaturan', g: 'Kelola', roles: ['admin'] },
+  { id: 'support', label: 'Support Developer', g: 'Lainnya', roles: ['admin', 'kasir'] }
 ];
 
 function pageHead(title, sub, actions) {
@@ -2934,7 +2936,7 @@ function renderShell() {
     '<div class="who"><button type="button" class="who-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false"><span class="ava">' + esc((u.full_name || '?')[0].toUpperCase()) + '</span><span class="w"><b>' + esc(u.full_name) + '</b><small>' + ROLE[u.role] + '</small></span><span aria-hidden="true">▾</span></button>' +
     '<div class="menu" id="menu" role="menu" hidden><button type="button" role="menuitem" data-act="pwd">Ganti password</button><button type="button" role="menuitem" data-act="theme">Ganti tema</button>' +
     (IS_DEMO ? '<button type="button" role="menuitem" data-act="demoReset">Reset data demo</button>' : '') + '<hr><button type="button" role="menuitem" data-act="logout">Keluar</button></div></div></header>' +
-    '<div id="banner"></div><div class="shell" id="shell" data-nav="closed"><aside class="side" id="side" aria-label="Menu utama"><div class="side-head"><b>Menu</b><button type="button" class="side-x" data-act="closeNav" aria-label="Tutup menu">' + icon('close', 20) + '</button></div><nav id="nav"></nav><div class="side-foot">CuciAja · Powered by ASKER<br>© 2026 ASKER. All rights reserved.</div></aside><div class="scrim" data-act="closeNav"></div><main id="view" tabindex="-1"></main></div><nav class="bnav" id="bnav" aria-label="Navigasi utama"></nav>';
+    '<div id="banner"></div><div class="shell" id="shell" data-nav="closed"><aside class="side" id="side" aria-label="Menu utama"><div class="side-head"><b>Menu</b><button type="button" class="side-x" data-act="closeNav" aria-label="Tutup menu">' + icon('close', 20) + '</button></div><nav id="nav"></nav><div class="side-foot">CuciAja · Powered by ASKER<br>© 2026 ASKER. All rights reserved.<br><button type="button" data-act="nav" data-v="support" style="margin-top:6px;padding:0;border:0;background:none;color:var(--brand);font:inherit;font-weight:700;cursor:pointer">♥ Bantu Support Developer</button></div></aside><div class="scrim" data-act="closeNav"></div><main id="view" tabindex="-1"></main></div><nav class="bnav" id="bnav" aria-label="Navigasi utama"></nav>';
   renderBanner(); renderNet(); S.navOverlay = false; applyNav();
 }
 function renderBanner() {
@@ -4468,9 +4470,27 @@ Object.assign(CHG, {
 });
 Object.assign(INP, { rcQ: debounce(t => { S.rc.q = t.value.trim(); loadRc(); }, 250) });
 
+
+/* ================= SUPPORT DEVELOPER ================= */
+/* Link Saweria developer. Kosongkan ('') bila belum ada: tombol akan nonaktif. */
+const SAWERIA_URL = 'https://saweria.co/reksayp';
+function viewSupport() {
+  const ok = /^https:\/\/saweria\.co\/[A-Za-z0-9_.-]+\/?$/.test(SAWERIA_URL);
+  $('#view').innerHTML = '<div class="page">' + pageHead('Support Developer', 'CuciAja gratis untuk UMKM. Dukungan Anda membantu aplikasi ini terus dikembangkan.') +
+    '<div class="stack" style="max-width:640px"><div class="card"><div class="card-body">' +
+      '<p style="margin:0 0 10px;font-size:16px;line-height:1.55"><b>Terima kasih sudah memakai CuciAja!</b></p>' +
+      '<p class="muted" style="margin:0 0 14px;line-height:1.6">CuciAja bisa dipakai gratis, tanpa biaya bulanan. Kalau aplikasi ini membantu usaha Anda, Anda bisa ikut membantu support developer lewat Saweria, berapa pun nominalnya. Dukungan ini sukarela dan tidak membuka atau mengunci fitur apa pun.</p>' +
+      '<ul class="muted" style="margin:0 0 18px;padding-left:20px;line-height:1.7"><li>Perbaikan bug dan fitur baru</li><li>Biaya pengembangan & pengujian</li><li>Menjaga CuciAja tetap gratis untuk UMKM</li></ul>' +
+      (ok ? '<a class="btn btn-primary" href="' + esc(SAWERIA_URL) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none">' + icon('support', 20) + '<span>Bantu Support Developer via Saweria</span></a>' +
+            '<p class="muted" style="margin:12px 0 0;font-size:13px">Membuka ' + esc(SAWERIA_URL.replace('https://', '')) + ' — pembayaran via QRIS, e-wallet, atau transfer di halaman Saweria.</p>'
+          : '<button type="button" class="btn" disabled>Link Saweria belum diatur</button>') +
+    '</div></div><p class="muted" style="text-align:center;font-size:13px;margin:4px 0 0">CuciAja · Support UMKM · Powered by ASKER</p></div></div>';
+}
+
 /* ---------- daftar layar ---------- */
 Object.assign(VIEWS, {
   kasir() { viewKasir(); if (catalogStale) { catalogStale = false; refreshCatalog(true); } },
+  support: viewSupport,
   dashboard: viewDashboard, riwayat: viewRiwayat, produk: viewProduk, pelanggan: viewPelanggan,
   pengguna: viewPengguna, pengaturan: viewPengaturan,
   order: viewOrder, cucian: viewCucian, riwayatcucian: viewRiwayatCucian, layanan: viewLayanan
