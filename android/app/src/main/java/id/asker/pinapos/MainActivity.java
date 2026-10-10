@@ -2,7 +2,7 @@
  * PinaPos — aplikasi kasir untuk UMKM.
  * Copyright (c) 2026 ASKER. All rights reserved. Powered by ASKER.
  *
- * Pembungkus WebView: menjalankan PinaPos (kasirku/index.html) dari dalam APK,
+ * Pembungkus WebView: menjalankan PinaPos (kasirku/) atau CuciAja (cuciaja/) dari dalam APK,
  * tanpa server dan tanpa internet. Data tersimpan di penyimpanan aplikasi.
  */
 package id.asker.pinapos;
@@ -41,7 +41,7 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.androidplatform.net";
-    private static final String BASE = "https://" + HOST + "/assets/www/kasirku/";
+    private static final String BASE = "https://" + HOST + "/assets/www/" + BuildConfig.APP_DIR + "/";
     private static final int FILE_REQUEST = 7;
 
     private WebView web;
@@ -173,7 +173,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void print(final String html, final String jobName) {
             runOnUiThread(() -> {
-                final String job = (jobName == null || jobName.isEmpty()) ? "PinaPos" : jobName;
+                final String job = (jobName == null || jobName.isEmpty()) ? BuildConfig.APP_NAME : jobName;
                 WebView pw = new WebView(MainActivity.this);
                 pw.setWebViewClient(new WebViewClient() {
                     @Override
@@ -199,7 +199,7 @@ public class MainActivity extends Activity {
                     ContentValues v = new ContentValues();
                     v.put(MediaStore.Downloads.DISPLAY_NAME, name);
                     v.put(MediaStore.Downloads.MIME_TYPE, mime);
-                    v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/PinaPos");
+                    v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + BuildConfig.APP_NAME);
                     Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
                     if (uri == null) {
                         throw new IllegalStateException("Penyimpanan tidak tersedia");
@@ -207,7 +207,7 @@ public class MainActivity extends Activity {
                     try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                         os.write(bytes);
                     }
-                    where = "Download/PinaPos/" + name;
+                    where = "Download/" + BuildConfig.APP_NAME + "/" + name;
                 } else {
                     File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
                     File f = new File(dir, name);
