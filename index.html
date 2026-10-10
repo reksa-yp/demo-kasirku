@@ -38,6 +38,7 @@ h1{ margin:8px 0 12px; font-size:clamp(28px,5vw,42px); line-height:1.12; letter-
 .app li{ display:flex; gap:10px; } .app li::before{ content:'✓'; flex:none; font-weight:800; color:var(--c); }
 .btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:50px; margin-top:auto; padding:0 20px; font-weight:700; font-size:16px; color:#fff; text-decoration:none; background:var(--c); border-radius:14px; }
 .btn:hover{ filter:brightness(1.08); } .btn:focus-visible{ outline:3px solid var(--accent); outline-offset:2px; }
+.btn.dl{ margin-top:0; color:var(--ks); background:var(--ks-soft); }
 .ca{ --c:var(--ca); } .ks{ --c:var(--ks); }
 .ca .tag{ background:var(--ca-soft); color:var(--ca); } .ks .tag{ background:var(--ks-soft); color:var(--ks); }
 .tag{ align-self:flex-start; padding:3px 10px; font-size:12px; font-weight:700; border-radius:999px; }
@@ -45,6 +46,7 @@ h1{ margin:8px 0 12px; font-size:clamp(28px,5vw,42px); line-height:1.12; letter-
 .login code{ font-family:ui-monospace,Consolas,monospace; color:var(--ink); font-weight:600; }
 .notes{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:34px; }
 .note{ padding:16px 18px; background:var(--surface); border:1px solid var(--line); border-radius:16px; }
+.note a{ color:var(--ks); font-weight:600; }
 .note b{ display:block; margin-bottom:4px; } .note p{ margin:0; color:var(--muted); font-size:14px; }
 footer{ margin-top:36px; color:var(--muted); font-size:14px; }
 </style>
@@ -82,11 +84,12 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
       </ul>
       <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
       <a class="btn" href="kasirku/">Coba demo PinaPos →</a>
+      <a class="btn dl" href="download/">⬇ Download APK Android (gratis)</a>
     </section>
   </div>
 
   <div class="notes">
-    <div class="note"><b>Bisa dipasang di mana saja</b><p>XAMPP di komputer toko, hosting online, atau APK Android yang berjalan tanpa server.</p></div>
+    <div class="note"><b>Bisa dipasang di mana saja</b><p>XAMPP di komputer toko, hosting online, atau <a href="download/">APK Android</a> yang berjalan tanpa server.</p></div>
     <div class="note"><b>Coba mode offline</b><p>Di dalam demo, tekan "Simulasi: putuskan server" lalu tetap lakukan transaksi.</p></div>
     <div class="note"><b>Mulai dari awal</b><p>Menu akun (kanan atas) → Reset data demo untuk mengembalikan data contoh.</p></div>
   </div>
