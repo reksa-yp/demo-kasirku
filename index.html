@@ -23,6 +23,7 @@
   :root{ --bg:#0b1118; --surface:#131c26; --ink:#e7eef6; --muted:#98a8b9; --line:#243240; --ca-soft:#0f2b3d; --ks-soft:#173525; --shadow:0 18px 40px -18px rgba(0,0,0,.7); }
 }
 *{ box-sizing:border-box; }
+[hidden]{ display:none !important; }
 body{ margin:0; font:16px/1.55 var(--font); color:var(--ink); background:var(--bg); }
 .wrap{ max-width:1040px; margin:0 auto; padding:48px 16px 56px; }
 header{ max-width:680px; }
@@ -49,6 +50,8 @@ h1{ margin:8px 0 12px; font-size:clamp(28px,5vw,42px); line-height:1.12; letter-
 .note{ padding:16px 18px; background:var(--surface); border:1px solid var(--line); border-radius:16px; }
 .note a{ color:var(--ks); font-weight:600; }
 .note b{ display:block; margin-bottom:4px; } .note p{ margin:0; color:var(--muted); font-size:14px; }
+.dlcount{ margin:-4px 0 0; text-align:center; font-size:14px; color:var(--muted); } .dlcount b{ color:var(--c); }
+.total{ display:inline-block; margin:16px 0 0; padding:6px 14px; font-size:15px; color:var(--ks); background:var(--ks-soft); border-radius:999px; } .total b{ font-size:17px; }
 footer{ margin-top:36px; color:var(--muted); font-size:14px; }
 </style>
 </head>
@@ -58,6 +61,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
     <div class="eyebrow">Demo langsung di browser</div>
     <h1>Aplikasi kasir untuk laundry dan toko, tetap jalan saat offline</h1>
     <p class="lead">Pilih salah satu demo di bawah. Semua data contoh dibuat di browser Anda sendiri, jadi bebas dicoba: buat order, bayar, cetak nota, ubah warna tema.</p>
+    <p class="total" data-stat="total" hidden>Sudah <b data-count="total">0</b> kali diunduh untuk membantu UMKM.</p>
   </header>
 
   <div class="grid">
@@ -73,6 +77,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
       <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
       <a class="btn" href="cuciaja/">Coba demo CuciAja →</a>
       <a class="btn dl" href="download/cuciaja/">⬇ Download APK Android (gratis)</a>
+      <p class="dlcount" data-stat="cuciaja" hidden><b data-count="cuciaja">0</b> kali diunduh</p>
     </section>
 
     <section class="app ks">
@@ -87,6 +92,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
       <div class="login">Masuk sebagai <code>admin</code> / <code>admin123</code> atau <code>kasir1</code> / <code>kasir123</code></div>
       <a class="btn" href="kasirku/">Coba demo PinaPos →</a>
       <a class="btn dl" href="download/">⬇ Download APK Android (gratis)</a>
+      <p class="dlcount" data-stat="pinapos" hidden><b data-count="pinapos">0</b> kali diunduh</p>
     </section>
   </div>
 
@@ -98,5 +104,6 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; }
 
   <footer>Data di demo ini fiktif dan hanya tersimpan di browser Anda.<br>© 2026 ASKER. All rights reserved. · Powered by ASKER</footer>
 </div>
+<script src="download/stats.js"></script>
 </body>
 </html>
