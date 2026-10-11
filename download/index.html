@@ -24,6 +24,7 @@
   :root{ --bg:#0c130f; --surface:#141e18; --ink:#e7eef0; --muted:#9db0a5; --line:#26352c; --brand:#3fa46c; --brand-soft:#173525; --shadow:0 18px 40px -18px rgba(0,0,0,.7); }
 }
 *{ box-sizing:border-box; }
+[hidden]{ display:none !important; }
 body{ margin:0; font:16px/1.6 var(--font); color:var(--ink); background:var(--bg); }
 a{ color:var(--brand); font-weight:600; }
 .wrap{ max-width:760px; margin:0 auto; padding:28px 16px 56px; }
@@ -34,6 +35,8 @@ a{ color:var(--brand); font-weight:600; }
 h1{ margin:4px 0 0; font-size:clamp(26px,5vw,38px); line-height:1.15; letter-spacing:-.01em; text-wrap:balance; }
 .lead{ margin:20px 0 0; font-size:17px; color:var(--muted); }
 .cta{ margin:26px 0 8px; padding:22px; background:var(--surface); border:1px solid var(--line); border-radius:20px; box-shadow:var(--shadow); }
+.stat{ margin:0 0 16px; text-align:center; color:var(--muted); font-size:15px; }
+.stat b{ display:block; font-size:38px; line-height:1.1; color:var(--brand); letter-spacing:-.01em; }
 .btn{ display:flex; align-items:center; justify-content:center; gap:10px; min-height:56px; padding:0 22px; font-size:17px; font-weight:800; color:#fff; text-decoration:none; background:var(--brand); border-radius:14px; }
 .btn:hover{ filter:brightness(1.08); } .btn:focus-visible{ outline:3px solid var(--pine); outline-offset:2px; }
 .btn.alt{ margin-top:10px; min-height:48px; font-size:15px; color:var(--brand); background:var(--brand-soft); }
@@ -68,10 +71,11 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; text-align:center; 
   <p class="lead">PinaPos adalah aplikasi kasir Android yang bisa Anda download dan pakai gratis, tanpa biaya bulanan. Dibuat untuk warung, toko kelontong, dan usaha kecil lain yang butuh kasir sederhana tapi rapi. PinaPos berjalan offline tanpa server dan tanpa internet, jadi kasir tetap jalan walau sinyal hilang.</p>
 
   <section class="cta" aria-label="Download">
-    <a class="btn" href="https://github.com/reksa-yp/demo-kasirku/releases/latest" rel="noopener">⬇ Download APK PinaPos</a>
+    <p class="stat" data-stat="pinapos" hidden><b data-count="pinapos">0</b> kali diunduh · terima kasih sudah ikut mendukung UMKM</p>
+    <a class="btn" data-dl="pinapos" href="https://github.com/reksa-yp/demo-kasirku/releases/latest" rel="noopener">⬇ Download APK PinaPos</a>
     <a class="btn alt" href="../kasirku/">Coba dulu di browser</a>
     <div class="meta"><span>Gratis</span><span>± 0,6 MB</span><span>Android 7.0+</span><span>Offline</span></div>
-    <p class="hint">Di halaman download, pilih file <b>PinaPos-….apk</b> di bagian <b>Assets</b>.</p>
+    <p class="hint">File APK PinaPos versi terbaru langsung terunduh. Jika tidak, pilih file <b>PinaPos-….apk</b> di bagian <b>Assets</b>.</p>
   </section>
 
   <h2>Fitur PinaPos</h2>
@@ -90,7 +94,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; text-align:center; 
   <h2>Info aplikasi</h2>
   <table>
     <tr><th scope="row">Nama aplikasi</th><td>PinaPos — Support UMKM</td></tr>
-    <tr><th scope="row">Versi terbaru</th><td>1.0.0</td></tr>
+    <tr><th scope="row">Versi terbaru</th><td data-ver="pinapos">1.3</td></tr>
     <tr><th scope="row">Ukuran file</th><td>± 0,6 MB</td></tr>
     <tr><th scope="row">Android minimal</th><td>Android 7.0</td></tr>
     <tr><th scope="row">Harga</th><td>Gratis, tanpa biaya bulanan</td></tr>
@@ -100,7 +104,7 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; text-align:center; 
 
   <h2>Cara download dan install</h2>
   <ol>
-    <li>Ketuk tombol <a href="https://github.com/reksa-yp/demo-kasirku/releases/latest" rel="noopener">Download APK PinaPos</a> dari browser HP Android (Chrome).</li>
+    <li>Ketuk tombol <a data-dl="pinapos" href="https://github.com/reksa-yp/demo-kasirku/releases/latest" rel="noopener">Download APK PinaPos</a> dari browser HP Android (Chrome).</li>
     <li>Di bagian <b>Assets</b>, ketuk file <b>PinaPos-….apk</b> untuk mulai mengunduh.</li>
     <li>Setelah selesai, buka file tersebut dari notifikasi atau folder <b>Download</b>.</li>
     <li>Jika muncul peringatan, izinkan <b>Instal dari sumber tidak dikenal</b> untuk Chrome atau aplikasi file manager Anda, lalu kembali.</li>
@@ -141,5 +145,6 @@ footer{ margin-top:36px; color:var(--muted); font-size:14px; text-align:center; 
 
   <footer>PinaPos · Support UMKM · Powered by ASKER<br>© 2026 ASKER. All rights reserved.</footer>
 </div>
+<script src="stats.js"></script>
 </body>
 </html>

@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # Naikkan angka ini untuk update besar (mis. '2.0'); angka terakhir diisi nomor build otomatis.
+  APP_VERSION_BASE: '1.3'
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -47,17 +51,17 @@ jobs:
 
       - name: Beri nama file
         run: |
-          VER=$(grep versionName android/app/build.gradle | sed -E "s/.*'(.*)'.*/\1/")
+          VER="$APP_VERSION_BASE.$GITHUB_RUN_NUMBER"
           echo "VER=$VER" >> "$GITHUB_ENV"
           cp android/app/build/outputs/apk/pinapos/debug/app-pinapos-debug.apk "PinaPos-$VER.apk"
-          cp android/app/build/outputs/apk/cuciaja/debug/app-cuciaja-debug.apk "CuciAja.apk"
+          cp android/app/build/outputs/apk/cuciaja/debug/app-cuciaja-debug.apk "CuciAja-$VER.apk"
 
       - uses: actions/upload-artifact@v4
         with:
           name: APK-${{ env.VER }}
           path: |
             PinaPos-${{ env.VER }}.apk
-            CuciAja.apk
+            CuciAja-${{ env.VER }}.apk
 
       - name: Terbitkan PinaPos di Releases
         if: github.ref == 'refs/heads/main'
@@ -75,22 +79,20 @@ jobs:
             © 2026 ASKER. Powered by ASKER.
           files: PinaPos-${{ env.VER }}.apk
 
-      # CuciAja memakai satu rilis tetap (tag cuciaja-apk) yang file-nya diganti setiap build,
-      # sehingga link download langsung selalu sama:
-      # https://github.com/reksa-yp/demo-kasirku/releases/download/cuciaja-apk/CuciAja.apk
+      # CuciAja juga terbit sebagai rilis baru per versi (bukan rilis utama/"latest").
+      # Halaman download/cuciaja/ mencari file CuciAja terbaru dan menjumlahkan unduhan semua versi.
       - name: Terbitkan CuciAja di Releases
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: cuciaja-apk
-          name: CuciAja (Android)
+          tag_name: cuciaja-v${{ env.VER }}
+          name: CuciAja ${{ env.VER }} (Android)
           target_commitish: ${{ github.sha }}
           make_latest: false
-          overwrite_files: true
           body: |
             APK CuciAja untuk Android — kasir laundry yang berjalan offline tanpa server.
-            Pasang: unduh CuciAja.apk di bawah, buka, lalu izinkan "Instal dari sumber tidak dikenal".
+            Pasang: unduh file .apk di bawah, buka, lalu izinkan "Instal dari sumber tidak dikenal".
             Akun contoh: admin / admin123 · kasir1 / kasir123
 
             © 2026 ASKER. Powered by ASKER.
-          files: CuciAja.apk
+          files: CuciAja-${{ env.VER }}.apk
