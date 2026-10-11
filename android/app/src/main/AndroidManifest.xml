@@ -2,6 +2,9 @@
 <!-- PinaPos — Copyright (c) 2026 ASKER. All rights reserved. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Hanya untuk melihat jumlah unduhan & versi terbaru di menu Support Developer; aplikasi tetap berjalan offline. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
