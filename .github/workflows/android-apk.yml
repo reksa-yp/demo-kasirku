@@ -35,6 +35,9 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Tentukan versi
+        run: echo "VER=$APP_VERSION_BASE.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
       - name: Salin aplikasi web ke dalam APK
         run: |
           # aset bersama di main, halaman aplikasi per flavor (APK hanya berisi aplikasinya sendiri)
@@ -42,6 +45,11 @@ jobs:
           cp -r assets android/app/src/main/assets/www/
           cp -r kasirku android/app/src/pinapos/assets/www/
           cp -r cuciaja android/app/src/cuciaja/assets/www/
+          # tulis nomor versi build ini ke dalam aplikasi (tampil di menu Support Developer)
+          for f in android/app/src/pinapos/assets/www/kasirku/index.html android/app/src/cuciaja/assets/www/cuciaja/index.html; do
+            sed -i -E "s/^const APP_UI_VERSION = '[^']*';/const APP_UI_VERSION = '$VER';/; s/^var APP_VERSION = '[^']*';/var APP_VERSION = '$VER';/" "$f"
+            grep -q "APP_UI_VERSION = '$VER'" "$f"
+          done
 
       - name: Build APK
         working-directory: android
@@ -51,8 +59,6 @@ jobs:
 
       - name: Beri nama file
         run: |
-          VER="$APP_VERSION_BASE.$GITHUB_RUN_NUMBER"
-          echo "VER=$VER" >> "$GITHUB_ENV"
           cp android/app/build/outputs/apk/pinapos/debug/app-pinapos-debug.apk "PinaPos-$VER.apk"
           cp android/app/build/outputs/apk/cuciaja/debug/app-cuciaja-debug.apk "CuciAja-$VER.apk"
 
