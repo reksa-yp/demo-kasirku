@@ -21,6 +21,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.Settings;
+import androidx.core.content.FileProvider;
 import android.print.PrintAttributes;
 import android.print.PrintManager;
 import android.provider.MediaStore;
@@ -40,6 +42,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -157,6 +162,11 @@ public class MainActivity extends Activity {
     private boolean btAllowed() {
         return Build.VERSION.SDK_INT < 31
                 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void apkMsg(String stage, String msg) {
+        final String js = "window.ksrApk && window.ksrApk(" + JSONObject.quote(stage) + "," + JSONObject.quote(msg) + ")";
+        web.post(() -> web.evaluateJavascript(js, null));
     }
 
     private void notifyBt(boolean ok, String msg) {
@@ -294,6 +304,60 @@ public class MainActivity extends Activity {
                     notifyBt(false, "Gagal tersambung ke printer: " + e.getMessage() + ". Pastikan printer menyala, dekat, dan tidak sedang dipakai aplikasi lain.");
                 } finally {
                     try { if (sock != null) { sock.close(); } } catch (Exception ignored) { }
+                }
+            }).start();
+        }
+
+        /** Unduh APK pembaruan (hanya dari rilis GitHub proyek ini) lalu buka pemasang Android. Hasil lewat window.ksrApk. */
+        @JavascriptInterface
+        public void installApk(final String url, final String name) {
+            if (url == null || !url.startsWith("https://github.com/reksa-yp/demo-kasirku/releases/download/")) {
+                apkMsg("fail", "Alamat unduhan tidak dikenali.");
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                    } catch (Exception ignored) { }
+                });
+                apkMsg("perm", "");
+                return;
+            }
+            new Thread(() -> {
+                try {
+                    File dir = new File(getCacheDir(), "apk");
+                    if (!dir.exists()) { dir.mkdirs(); }
+                    File[] old = dir.listFiles();
+                    if (old != null) { for (File f : old) { f.delete(); } }
+                    File out = new File(dir, "update.apk");
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(30000);
+                    c.setInstanceFollowRedirects(true);
+                    if (c.getResponseCode() != 200) {
+                        throw new IllegalStateException("HTTP " + c.getResponseCode());
+                    }
+                    try (InputStream in = c.getInputStream(); FileOutputStream os = new FileOutputStream(out)) {
+                        byte[] buf = new byte[32768];
+                        int n;
+                        while ((n = in.read(buf)) > 0) { os.write(buf, 0, n); }
+                    }
+                    c.disconnect();
+                    final Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", out);
+                    runOnUiThread(() -> {
+                        try {
+                            Intent i = new Intent(Intent.ACTION_VIEW);
+                            i.setDataAndType(uri, "application/vnd.android.package-archive");
+                            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(i);
+                        } catch (Exception e) {
+                            apkMsg("fail", "Tidak dapat membuka pemasang: " + e.getMessage());
+                        }
+                    });
+                    apkMsg("ready", "");
+                } catch (Exception e) {
+                    apkMsg("fail", "Gagal mengunduh pembaruan: " + e.getMessage());
                 }
             }).start();
         }

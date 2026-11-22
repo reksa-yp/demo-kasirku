@@ -51,8 +51,22 @@ jobs:
             grep -q "APP_UI_VERSION = '$VER'" "$f"
           done
 
+      - name: Siapkan kunci tanda tangan tetap
+        env:
+          KS_B64: ${{ secrets.PINAPOS_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/pinapos.jks"
+            echo "PINAPOS_KEYSTORE_FILE=$RUNNER_TEMP/pinapos.jks" >> "$GITHUB_ENV"
+            echo "Memakai kunci tanda tangan tetap."
+          else
+            echo "::warning::PINAPOS_KEYSTORE_B64 belum diisi; APK memakai kunci debug (update tidak bisa menimpa versi sebelumnya)."
+          fi
+
       - name: Build APK
         working-directory: android
+        env:
+          PINAPOS_KEY_PASSWORD: ${{ secrets.PINAPOS_KEY_PASSWORD }}
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle --no-daemon assemblePinaposDebug assembleCuciajaDebug
