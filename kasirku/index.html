@@ -803,7 +803,7 @@ function createBackend_(P) {
   // id negatif sungguhan karena mesin offline menuliskan ulang semua id sementara ini menjadi
   // id asli dari server sesaat setelah tersinkron (lihat rewriteRefs_ di engine.js).
   function refId(v, label) {
-    var n = int(v, label, -1e12, 1e12);
+    var n = int(v, label, -9e15, 9e15);
     if (n === 0) { fail(label + ' tidak valid.'); }
     return n;
   }
@@ -892,7 +892,7 @@ function createBackend_(P) {
     var tax = round0_(taxable * taxRate / 100);
     return { discount: disc, tax: tax, grand: taxable + tax };
   }
-  function invoiceNo(yy, code, seq) { return yy + '-' + code + '-' + pad_(seq, 6); }
+  function invoiceNo(yy, code, seq) { return yy + '-' + code + '-' + ((P.invTag && P.invTag()) || '') + pad_(seq, 6); }
 
   /* ================================================================
      AKSI
@@ -1405,62 +1405,348 @@ function sha256Hex_(msg) {
   return H.map(function (x) { return ('00000000' + (x >>> 0).toString(16)).slice(-8); }).join('');
 }
 
-function memoryDb_(state, onChange) {
-  function coerce(t, o) {
-    var out = {};
-    SCHEMA[t].forEach(function (c) {
-      var v = o[c[0]];
-      if (c[1] === 'n') { v = (v === '' || v === null || v === undefined) ? 0 : (Number(v) || 0); }
-      else if (c[1] === 'b') { v = (v === true || v === 1 || v === '1'); }
-      else { v = (v === null || v === undefined) ? '' : String(v); }
-      out[c[0]] = v;
-    });
-    return out;
-  }
-  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+/* ================================================================
+   SINKRON SUPABASE (opsional) - lokal dulu, sinkron belakangan
+   - Semua logika tetap jalan di perangkat (bisa offline penuh).
+   - Tiap perubahan data direkam sebagai "event" di antrean (state.sync.out).
+   - Saat online: tarik event perangkat lain (pull), lalu kirim event sendiri (push)
+     lewat fungsi RPC Supabase (lihat supabase/pinapos_sync.sql).
+   - Stok digabung sebagai selisih (+/-), jadi dua kasir menjual barang yang sama
+     tidak saling menimpa. Kolom lain: yang terakhir masuk server yang menang.
+   ================================================================ */
+var SYNC_LOCAL_KV = { inv_year: 1, inv_next: 1 };   // urutan invoice berikutnya: per perangkat
+var SYNC_EPOCH = 1767225600000;                     // 2026-01-01 UTC (basis ID unik)
+
+function coerceRow_(t, o) {
+  var out = {};
+  SCHEMA[t].forEach(function (c) {
+    var v = o[c[0]];
+    if (c[1] === 'n') { v = (v === '' || v === null || v === undefined) ? 0 : (Number(v) || 0); }
+    else if (c[1] === 'b') { v = (v === true || v === 1 || v === '1'); }
+    else { v = (v === null || v === undefined) ? '' : String(v); }
+    out[c[0]] = v;
+  });
+  return out;
+}
+function cloneJ_(o) { return JSON.parse(JSON.stringify(o)); }
+
+/* hook (opsional): { on():bool, newId():number, emit(event) } -- aktif hanya saat tersambung ke Supabase */
+function memoryDb_(state, onChange, hook) {
+  hook = hook || {};
+  var coerce = coerceRow_, clone = cloneJ_;
+  function sOn() { return !!(hook.on && hook.on()); }
+  function rec(ev) { if (hook.emit) { hook.emit(ev); } }
+  function maxId(rows) { var id = 0; rows.forEach(function (r) { if (r.id > id) { id = r.id; } }); return id; }
   return {
     all: function (t) { return state.tables[t].map(clone); },
     insert: function (t, o) {
-      var rows = state.tables[t], id = 0;
-      rows.forEach(function (r) { if (r.id > id) { id = r.id; } });
-      var row = coerce(t, Object.assign({}, o, { id: id + 1 }));
-      rows.push(row); onChange(); return clone(row);
+      var rows = state.tables[t], sync = sOn();
+      var id = sync ? hook.newId() : maxId(rows) + 1;
+      var row = coerce(t, Object.assign({}, o, { id: id }));
+      rows.push(row);
+      if (sync) { rec({ t: t, o: 'i', id: id, d: clone(row) }); }
+      onChange(); return clone(row);
     },
     insertMany: function (t, arr) {
-      var rows = state.tables[t], id = 0, out = [];
-      rows.forEach(function (r) { if (r.id > id) { id = r.id; } });
-      arr.forEach(function (o) { var row = coerce(t, Object.assign({}, o, { id: ++id })); rows.push(row); out.push(clone(row)); });
+      var rows = state.tables[t], sync = sOn(), id = sync ? 0 : maxId(rows), out = [];
+      arr.forEach(function (o) {
+        id = sync ? hook.newId() : id + 1;
+        var row = coerce(t, Object.assign({}, o, { id: id }));
+        rows.push(row); out.push(clone(row));
+        if (sync) { rec({ t: t, o: 'i', id: id, d: clone(row) }); }
+      });
       onChange(); return out;
     },
     update: function (t, id, patch) {
       var row = state.tables[t].filter(function (r) { return r.id === id; })[0];
       if (!row) { return null; }
+      var old = clone(row);
       var merged = coerce(t, Object.assign({}, row, patch, { id: id }));
       Object.keys(merged).forEach(function (k) { row[k] = merged[k]; });
+      if (sOn()) {
+        var d = {}, n = 0, sd = 0;
+        Object.keys(merged).forEach(function (k) {
+          if (k === 'id' || merged[k] === old[k]) { return; }
+          if (t === 'Products' && k === 'stock') { sd = Math.round((merged[k] - old[k]) * 1e6) / 1e6; }   // stok = selisih
+          else { d[k] = merged[k]; n++; }
+        });
+        var onlyLogin = t === 'Users' && n === 1 && d.last_login !== undefined && !sd;                       // jangan ramaikan log
+        if ((n || sd) && !onlyLogin) { rec({ t: t, o: 'u', id: id, d: d, sd: sd }); }
+      }
       onChange(); return clone(row);
     },
     removeMany: function (t, ids) {
       var before = state.tables[t].length;
+      if (sOn()) { state.tables[t].forEach(function (r) { if (ids.indexOf(r.id) >= 0) { rec({ t: t, o: 'd', id: r.id }); } }); }
       state.tables[t] = state.tables[t].filter(function (r) { return ids.indexOf(r.id) < 0; });
       onChange(); return before - state.tables[t].length;
     },
     kv: function () { return clone(state.kv); },
     kvWrite: function (set, del) {
-      Object.keys(set).forEach(function (k) { state.kv[k] = String(set[k]); });
-      (del || []).forEach(function (k) { delete state.kv[k]; });
+      var sync = sOn(), cs = {}, cd = [], any = false;
+      Object.keys(set).forEach(function (k) {
+        var nv = String(set[k]);
+        if (sync && !SYNC_LOCAL_KV[k] && state.kv[k] !== nv) { cs[k] = nv; any = true; }
+        state.kv[k] = nv;
+      });
+      (del || []).forEach(function (k) {
+        if (sync && !SYNC_LOCAL_KV[k] && state.kv[k] !== undefined) { cd.push(k); any = true; }
+        delete state.kv[k];
+      });
+      if (any) { rec({ t: 'Settings', o: 'k', d: { set: cs, del: cd } }); }
       onChange();
     }
   };
 }
 
+/* ctx: { state():object, save(), flush() } */
+function createSync_(ctx) {
+  var running = false, debounce = null, lastId = 0;
+  var BATCH_EVENTS = 300, BATCH_BYTES = 400000, PULL_LIMIT = 500;
+
+  function rand_(n) {
+    var s = '', abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var buf = null;
+    try { if (typeof crypto !== 'undefined' && crypto.getRandomValues) { buf = crypto.getRandomValues(new Uint8Array(n)); } } catch (e) { buf = null; }
+    for (var i = 0; i < n; i++) { s += abc.charAt((buf ? buf[i] : Math.floor(Math.random() * 256)) % abc.length); }
+    return s;
+  }
+  function stamp() { return fmtDateTime_(new Date()); }
+  function meta() {
+    var s = ctx.state();
+    if (!s.sync) { s.sync = { cfg: null, dev: 'd' + rand_(10), tag: '', seq: 0, ctr: 0, out: [], last: '', err: '', paused: false }; }
+    return s.sync;
+  }
+  function connected() { var s = ctx.state(); return !!(s && s.sync && s.sync.cfg); }
+  function online_() {
+    var off = false; try { off = !!(typeof window !== 'undefined' && window.KASIRKU_DEMO && window.KASIRKU_DEMO.offline); } catch (e) { off = false; }
+    return !off && (typeof navigator === 'undefined' || navigator.onLine !== false);
+  }
+  function notify(changed) {
+    try { if (typeof window !== 'undefined' && window.dispatchEvent && typeof CustomEvent === 'function') { window.dispatchEvent(new CustomEvent('pinapos-sync', { detail: { changed: !!changed } })); } } catch (e) {}
+  }
+  /* ID baris baru: unik antar perangkat (waktu + acak), naik terus di perangkat yang sama */
+  function newId() {
+    var c = (Date.now() - SYNC_EPOCH) * 1024 + Math.floor(Math.random() * 1024);
+    if (c <= lastId) { c = lastId + 1; }
+    lastId = c; return c;
+  }
+  function schedule() {
+    if (debounce) { clearTimeout(debounce); }
+    debounce = setTimeout(function () { debounce = null; run(); }, 2500);
+  }
+  var hook = {
+    on: connected,
+    newId: newId,
+    emit: function (ev) { var m = meta(); m.ctr++; ev.ref = m.dev + '-' + m.ctr; m.out.push(ev); schedule(); }
+  };
+
+  /* ---------- jaringan: fungsi RPC Supabase ---------- */
+  function call(cfg, name, args) {
+    var h = { 'Content-Type': 'application/json', apikey: cfg.key };
+    if (/^eyJ/.test(cfg.key)) { h.Authorization = 'Bearer ' + cfg.key; }   // kunci baru (sb_publishable_...) hanya lewat header apikey
+    return fetch(cfg.url + '/rest/v1/rpc/' + name, { method: 'POST', headers: h, body: JSON.stringify(args), cache: 'no-store' }).then(function (r) {
+      return r.text().then(function (txt) {
+        var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) { j = null; }
+        if (!r.ok) {
+          var msg = (j && (j.message || j.error || j.hint)) || ('HTTP ' + r.status);
+          if (r.status === 404 || /Could not find the function/i.test(String(msg))) { msg = 'Fungsi sinkron belum ada di Supabase. Jalankan supabase/pinapos_sync.sql di SQL Editor.'; }
+          if (/KODE_TOKO_TIDAK_DITEMUKAN/.test(String(msg))) { msg = 'Kode toko tidak ditemukan. Periksa kode, atau buat toko baru.'; }
+          var er = new Error(String(msg)); er.status = r.status; throw er;
+        }
+        return j;
+      });
+    }, function () { var er = new Error('Tidak dapat menghubungi Supabase (periksa internet / URL).'); er.net = true; throw er; });
+  }
+  function pushEvents(cfg, evs, dev, done) {
+    var i = 0;
+    function step() {
+      if (i >= evs.length) { return Promise.resolve(); }
+      var b = [], bytes = 0;
+      while (i < evs.length && b.length < BATCH_EVENTS) {
+        var n = JSON.stringify(evs[i]).length;
+        if (b.length && bytes + n > BATCH_BYTES) { break; }
+        b.push(evs[i]); i++; bytes += n;
+      }
+      return call(cfg, 'pinapos_push', { p_store: cfg.store, p_device: dev, p_events: b }).then(function () { if (done) { done(b); } return step(); });
+    }
+    return step();
+  }
+  function push(cfg) {
+    var m = meta();
+    var snapshot = m.out.slice();
+    return pushEvents(cfg, snapshot, m.dev, function (b) {
+      var sent = {}; b.forEach(function (e) { sent[e.ref] = 1; });
+      m.out = m.out.filter(function (e) { return !sent[e.ref]; });
+      ctx.save();
+    });
+  }
+
+  /* ---------- terapkan event dari perangkat lain ---------- */
+  function applyRows(rows) {
+    var s = ctx.state(), m = s.sync, T = s.tables, maps = {}, touched = {}, changed = 0;
+    var gf = {}, gk = {};   // yang masih antre di perangkat ini menang (nanti dikirim, urutannya belakangan)
+    m.out.forEach(function (e) {
+      if (e.o === 'u') { Object.keys(e.d || {}).forEach(function (k) { gf[e.t + ':' + e.id + ':' + k] = 1; }); }
+      else if (e.o === 'k') { Object.keys((e.d && e.d.set) || {}).concat((e.d && e.d.del) || []).forEach(function (k) { gk[k] = 1; }); }
+    });
+    function mapOf(t) {
+      if (!maps[t]) { maps[t] = new Map(); T[t].forEach(function (r) { maps[t].set(r.id, r); }); }
+      return maps[t];
+    }
+    rows.forEach(function (row) {
+      var e = row.data;
+      if (!e || row.device_id === m.dev) { return; }
+      if (e.o === 'k') {
+        var d = e.d || {};
+        Object.keys(d.set || {}).forEach(function (k) { if (!gk[k] && !SYNC_LOCAL_KV[k]) { s.kv[k] = String(d.set[k]); changed++; } });
+        (d.del || []).forEach(function (k) { if (!gk[k] && !SYNC_LOCAL_KV[k]) { delete s.kv[k]; changed++; } });
+        return;
+      }
+      if (!SCHEMA[e.t] || e.t === 'Settings' || !T[e.t]) { return; }   // tabel dari versi aplikasi lain: abaikan
+      var mp = mapOf(e.t), cur = mp.get(e.id);
+      if (e.o === 'i') {
+        var fresh = coerceRow_(e.t, Object.assign({}, e.d, { id: e.id }));
+        if (cur) {
+          var keep = {};
+          Object.keys(fresh).forEach(function (k) { if (!gf[e.t + ':' + e.id + ':' + k]) { keep[k] = fresh[k]; } });
+          Object.assign(cur, keep);
+        } else { mp.set(e.id, fresh); }
+        touched[e.t] = 1; changed++;
+      } else if (e.o === 'u') {
+        if (!cur) { return; }
+        var patch = {};
+        Object.keys(e.d || {}).forEach(function (k) { if (!gf[e.t + ':' + e.id + ':' + k]) { patch[k] = e.d[k]; } });
+        Object.assign(cur, coerceRow_(e.t, Object.assign({}, cur, patch)));
+        if (e.sd && e.t === 'Products') { cur.stock = Math.round((cur.stock + e.sd) * 1e6) / 1e6; }
+        touched[e.t] = 1; changed++;
+      } else if (e.o === 'd') {
+        if (cur) { mp.delete(e.id); touched[e.t] = 1; changed++; }
+      }
+    });
+    Object.keys(touched).forEach(function (t) { T[t] = Array.from(maps[t].values()); });
+    if (rows.length) { m.seq = rows[rows.length - 1].seq; }
+    ctx.save();
+    return changed;
+  }
+  function pull(cfg) {
+    var m = meta(), changed = 0;
+    function step() {
+      return call(cfg, 'pinapos_pull', { p_store: cfg.store, p_after: m.seq, p_limit: PULL_LIMIT }).then(function (rows) {
+        rows = rows || [];
+        if (rows.length) { changed += applyRows(rows); }
+        return rows.length >= PULL_LIMIT ? step() : changed;
+      });
+    }
+    return step();
+  }
+
+  /* ---------- satu putaran sinkron: tarik, lalu kirim ---------- */
+  function run(force) {
+    var s = ctx.state(), m = s && s.sync;
+    if (!m || !m.cfg || running) { return Promise.resolve(false); }
+    if (m.paused && !force) { return Promise.resolve(false); }
+    if (!online_()) { return Promise.resolve(false); }
+    running = true; notify(false);
+    var cfg = m.cfg, changed = 0, ok = false;
+    return pull(cfg).then(function (n) { changed = n; return push(cfg); }).then(function () {
+      m.err = ''; m.last = stamp(); ok = true;
+    }).catch(function (e) { m.err = (e && e.message) || 'Gagal sinkron.'; }).then(function () {
+      running = false; ctx.save(); notify(changed > 0); return ok;
+    });
+  }
+
+  /* ---------- sambungkan / putuskan ---------- */
+  function b64_(s) { return (typeof btoa === 'function' ? btoa(s) : Buffer.from(s, 'binary').toString('base64')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function unb64_(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) { s += '='; } return typeof atob === 'function' ? atob(s) : Buffer.from(s, 'base64').toString('binary'); }
+  function parseCode(code) {
+    code = String(code || '').trim();
+    if (code.indexOf('PNP1.') !== 0) { return null; }
+    try { var j = JSON.parse(unb64_(code.slice(5))); return (j && j.u && j.k && j.s) ? { url: j.u, key: j.k, store: j.s } : null; } catch (e) { return null; }
+  }
+  function code() {
+    var m = meta(); if (!m.cfg) { return ''; }
+    return 'PNP1.' + b64_(JSON.stringify({ u: m.cfg.url, k: m.cfg.key, s: m.cfg.store }));
+  }
+  function snapshotEvents() {
+    var s = ctx.state(), m = meta(), evs = [];
+    Object.keys(SCHEMA).forEach(function (t) {
+      if (t === 'Settings') { return; }
+      (s.tables[t] || []).forEach(function (r) { m.ctr++; evs.push({ ref: m.dev + '-' + m.ctr, t: t, o: 'i', id: r.id, d: cloneJ_(r) }); });
+    });
+    Object.keys(s.kv).forEach(function (k) {
+      if (SYNC_LOCAL_KV[k]) { return; }
+      var set = {}; set[k] = s.kv[k]; m.ctr++;
+      evs.push({ ref: m.dev + '-' + m.ctr, t: 'Settings', o: 'k', d: { set: set, del: [] } });
+    });
+    return evs;
+  }
+  /* opts: { url, key, mode:'create'|'join', store?, label? } */
+  function connect(opts) {
+    var fail = function (msg) { return Promise.reject(new Error(msg)); };
+    var url = String(opts.url || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
+    var key = String(opts.key || '').trim();
+    if (!/^https:\/\/[^\s\/]+$/.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(url)) { return fail('Alamat Supabase harus berbentuk https://xxxx.supabase.co'); }
+    if (key.length < 20) { return fail('Anon / publishable key tidak valid.'); }
+    var create = opts.mode === 'create';
+    var store = create ? rand_(32) : String(opts.store || '').trim();
+    if (!/^[A-Za-z0-9]{24,64}$/.test(store)) { return fail('Kode toko tidak valid.'); }
+    if (running) { return fail('Sinkronisasi sedang berjalan. Coba lagi sebentar.'); }
+    var m = meta(), cfg = { url: url, key: key, store: store };
+    running = true; notify(false);
+    var tag = '';
+    return call(cfg, 'pinapos_register', { p_store: store, p_device: m.dev, p_label: String(opts.label || ''), p_create: create }).then(function (t) {
+      tag = String(t || '');
+      return create ? pushEvents(cfg, snapshotEvents(), m.dev) : null;
+    }).then(function () {
+      var s = ctx.state();
+      if (!create) {   // gabung: ganti data perangkat ini dengan data toko
+        Object.keys(SCHEMA).forEach(function (t) { if (t !== 'Settings') { s.tables[t] = []; } });
+        s.kv = {};
+      }
+      m.cfg = cfg; m.tag = tag; m.seq = 0; m.out = []; m.err = ''; m.paused = false; m.last = '';
+      ctx.save();
+      running = false;
+      return run(true);
+    }).then(function (ok) {
+      ctx.flush();
+      if (!ok) { throw new Error(meta().err || 'Gagal menarik data toko.'); }
+      return { tag: tag, joined: !create, code: code() };
+    }, function (e) { running = false; notify(false); throw e; });
+  }
+  function disconnect() {
+    var m = meta();
+    m.cfg = null; m.tag = ''; m.out = []; m.seq = 0; m.err = ''; m.paused = false; m.last = '';
+    if (debounce) { clearTimeout(debounce); debounce = null; }
+    ctx.flush(); notify(false);
+  }
+  function setPaused(p) { var m = meta(); m.paused = !!p; ctx.save(); if (!p) { run(); } notify(false); }
+  function status() {
+    var s = ctx.state(), m = s && s.sync;
+    if (!m || !m.cfg) { return { connected: false }; }
+    return { connected: true, paused: !!m.paused, host: m.cfg.url.replace(/^https?:\/\//, ''), store: m.cfg.store, tag: m.tag, pending: m.out.length, last: m.last, err: m.err, running: running, online: online_() };
+  }
+  function tag() { var s = ctx.state(); return (s && s.sync && s.sync.cfg) ? (s.sync.tag || '') : ''; }
+
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('online', function () { run(); });
+    if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { run(); } }); }
+    setInterval(function () { run(); }, 30000);
+  }
+  return { hook: hook, tag: tag, run: run, api: { status: status, connect: connect, disconnect: disconnect, run: run, setPaused: setPaused, code: code, parseCode: parseCode } };
+}
+
 /* storage: { get():string|null, set(str), clear() } */
 function createDemoBackend(storage, logoDataUrl) {
   var state = null, timer = null;
-  function save() { if (timer) { return; } timer = setTimeout(function () { timer = null; try { storage.set(JSON.stringify(state)); } catch (e) {} }, 150); }
+  function persist() { try { storage.set(JSON.stringify(state)); } catch (e) {} }
+  function save() { if (timer) { return; } timer = setTimeout(function () { timer = null; persist(); }, 150); }
+  function flush() { if (timer) { clearTimeout(timer); timer = null; } persist(); }
   function emptyState() {
     var t = {}; Object.keys(SCHEMA).forEach(function (k) { if (k !== 'Settings') { t[k] = []; } });
     return { v: 1, secret: sha256Hex_('demo' + Math.random() + Date.now()), tables: t, kv: {} };
   }
+  var sync = createSync_({ state: function () { return state; }, save: save, flush: flush });
   var cache = {};
   var platform = {
     db: null,
@@ -1468,6 +1754,7 @@ function createDemoBackend(storage, logoDataUrl) {
     now: function () { return new Date(); },
     lock: function (fn) { return fn(); },
     secret: function () { return state.secret; },
+    invTag: function () { return sync.tag(); },   // huruf perangkat di nomor invoice saat tersambung Supabase
     cacheGet: function (k) { var e = cache[k]; return (e && e.exp > Date.now()) ? e.v : null; },
     cachePut: function (k, v, sec) { cache[k] = { v: v, exp: Date.now() + sec * 1000 }; }
   };
@@ -1478,15 +1765,17 @@ function createDemoBackend(storage, logoDataUrl) {
     if (!fresh) { try { var raw = storage.get(); if (raw) { var s = JSON.parse(raw); if (s && s.v === 1) { state = s; } } } catch (e) {} }
     var seeded = false;
     if (!state) { state = emptyState(); seeded = true; }
-    platform.db = memoryDb_(state, save);
+    platform.db = memoryDb_(state, save, sync.hook);
     backend = createBackend_(platform);
     if (seeded) { seedDemo_(backend, platform, logoDataUrl); }
     return backend;
   }
   build(false);
+  setTimeout(function () { sync.run(); }, 1500);
   return {
     handle: function (action, token, payload) { return backend.handle(action, token, payload); },
-    reset: function () { try { storage.clear(); } catch (e) {} build(true); save(); }
+    reset: function () { try { storage.clear(); } catch (e) {} build(true); save(); },
+    sync: sync.api
   };
 }
 
@@ -2632,7 +2921,7 @@ function renderShell() {
     '<button type="button" class="net" id="net" data-act="netInfo"></button>' +
     '<div class="who"><button type="button" class="who-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false"><span class="ava">' + esc((u.full_name || '?')[0].toUpperCase()) + '</span><span class="w"><b>' + esc(u.full_name) + '</b><small>' + ROLE[u.role] + '</small></span><span aria-hidden="true">▾</span></button>' +
     '<div class="menu" id="menu" role="menu" hidden><button type="button" role="menuitem" data-act="pwd">Ganti password</button><button type="button" role="menuitem" data-act="theme">Ganti tema</button>' +
-    (IS_DEMO ? '<button type="button" role="menuitem" data-act="demoReset">Reset data demo</button>' : '') + '<hr><button type="button" role="menuitem" data-act="logout">Keluar</button></div></div></header>' +
+    (canUpd() ? '<button type="button" role="menuitem" data-act="updCheck">Periksa update</button>' : '') + (IS_DEMO ? '<button type="button" role="menuitem" data-act="demoReset">Reset data demo</button>' : '') + '<hr><button type="button" role="menuitem" data-act="logout">Keluar</button></div></div></header>' +
     '<div id="banner"></div><div class="shell" id="shell" data-nav="closed"><aside class="side" id="side" aria-label="Menu utama"><div class="side-head"><b>Menu</b><button type="button" class="side-x" data-act="closeNav" aria-label="Tutup menu">' + icon('close', 20) + '</button></div><nav id="nav"></nav><div class="side-foot">PinaPos · Powered by ASKER<br>© 2026 ASKER. All rights reserved.<br><button type="button" data-act="nav" data-v="support" style="margin-top:6px;padding:0;border:0;background:none;color:var(--brand);font:inherit;font-weight:700;cursor:pointer">♥ Bantu Support Developer</button></div></aside><div class="scrim" data-act="closeNav"></div><main id="view" tabindex="-1"></main></div><nav class="bnav" id="bnav" aria-label="Navigasi utama"></nav>';
   renderBanner(); renderNet(); S.navOverlay = false; applyNav();
 }
@@ -2640,6 +2929,7 @@ function renderBanner() {
   const b = $('#banner'); if (!b) { return; }
   const bk = IS_LOCAL && S.user && S.user.role === 'admin' && store.get('ksr_bkdirty') === '1' && (Date.now() - Number(store.get('ksr_lastbackup') || 0) > 3 * 864e5);
   b.innerHTML = (bk ? '<div class="pwd-banner" role="status"><span><b>Data hanya ada di HP ini.</b> ' + (store.get('ksr_lastbackup') ? 'Backup terakhir ' + new Date(Number(store.get('ksr_lastbackup'))).toLocaleDateString('id-ID') + '.' : 'Belum pernah backup.') + '</span><button type="button" class="btn btn-sm" data-act="backupNow">Backup sekarang</button></div>' : '') +
+    (S.upd ? '<div class="pwd-banner" role="status"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">Perbarui sekarang</button></div>' : '') +
     (!NET.online ? '<div class="off-banner" role="status"><span><b>Mode offline.</b> Transaksi disimpan di perangkat ini dan dikirim otomatis saat server tersambung.</span><button type="button" class="btn btn-sm" data-act="netInfo">Lihat antrean</button></div>' : '') +
     (S.defaultPw && S.user && S.user.role === 'admin' ? '<div class="pwd-banner"><span>Password akun <b>admin</b> masih bawaan (admin123).</span><button type="button" class="btn btn-sm" data-act="pwd">Ganti sekarang</button></div>' : '');
 }
@@ -2744,6 +3034,7 @@ async function boot() {
     document.body.classList.add('local');
   } else if (IS_DEMO) {
     $('#demoNote').hidden = false;
+    try { if ('serviceWorker' in navigator && (location.protocol === 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname))) { navigator.serviceWorker.register('sw.js').catch(() => {}); } } catch (e) {}
     const b = $('#demoNet');
     b.onclick = () => {
       window.KASIRKU_DEMO.offline = !window.KASIRKU_DEMO.offline; b.setAttribute('aria-pressed', String(window.KASIRKU_DEMO.offline));
@@ -3445,7 +3736,7 @@ function viewPengaturan() {
   const s = ST();
   const f = (id, label, val, ph, extra) => '<label class="field"><span>' + label + '</span><input id="' + id + '" type="text" value="' + esc(val) + '" placeholder="' + esc(ph || '') + '" ' + (extra || '') + '></label>';
   $('#view').innerHTML = '<div class="page">' + pageHead('Pengaturan', 'Identitas usaha, warna tema, invoice, dan struk.', '<button type="button" class="btn btn-primary" data-act="setSave">Simpan pengaturan</button>') +
-    '<div class="stack">' + (IS_LOCAL ? backupCardHtml() : '') + themeCardHtml() +
+    '<div class="stack">' + (IS_LOCAL ? backupCardHtml() : '') + themeCardHtml() + (IS_DEMO ? syncCardHtml() : '') + (canUpd() ? updCardHtml() : '') +
     '<div class="card"><div class="card-head"><h2>Identitas usaha & logo</h2></div><div class="card-body">' +
       '<div class="field"><span class="field-label">Logo (tampil di invoice, struk, dan menu)</span><div class="logo-box" id="logoBox"></div></div>' +
       f('sName', 'Nama usaha *', s.store_name, '', 'maxlength="100"') +
@@ -3466,9 +3757,9 @@ function viewPengaturan() {
       '<label class="check" style="display:flex;margin-bottom:10px"><input type="checkbox" id="sLogoRc"' + (s.show_logo_on_receipt ? ' checked' : '') + '> Tampilkan logo di struk</label>' +
       '<label class="check" style="display:flex"><input type="checkbox" id="sAuto"' + (s.auto_print ? ' checked' : '') + '> Cetak struk otomatis setelah bayar (transaksi tanpa invoice)</label>' +
       '<div class="actions" style="margin-top:14px"><button type="button" class="btn" data-act="prnSetup">🖨 Atur printer (Bluetooth / RawBT)</button><span class="muted">Perangkat ini: ' + prnModeLabel() + '</span></div></div></div>' +
-    '<p class="page-note">' + (IS_LOCAL ? 'Aplikasi ini berjalan tanpa server: semua data tersimpan di HP ini. Lakukan <b>Backup data</b> secara rutin.' : IS_DEMO ? 'Mode demo: data hanya tersimpan di browser ini.' : 'Data usaha tersimpan di database MySQL <b>kasirku</b> pada server XAMPP / hosting Anda. Backup rutin lewat phpMyAdmin → Export.') + '</p></div></div>';
+    '<p class="page-note">' + (IS_LOCAL ? 'Aplikasi ini berjalan tanpa server: semua data tersimpan di HP ini. Lakukan <b>Backup data</b> secara rutin.' : IS_DEMO ? (SY() && SY().status().connected ? 'Data tersimpan di browser ini dan disinkronkan ke Supabase.' : 'Mode demo: data hanya tersimpan di browser ini.') : 'Data usaha tersimpan di database MySQL <b>kasirku</b> pada server XAMPP / hosting Anda. Backup rutin lewat phpMyAdmin → Export.') + '</p></div></div>';
   $('#sPaper').value = String(s.paper_width);
-  drawLogo(); drawQris(); invPreview(); bindTheme();
+  drawLogo(); drawQris(); invPreview(); bindTheme(); if (IS_DEMO) { drawSync(); } drawUpd();
 }
 function themeCardHtml() {
   const colors = [['brand', 'Warna utama', 'Tombol, menu aktif, harga'], ['accent', 'Warna aksen', 'Sorotan & grafik hari ini'], ['pay', 'Tombol BAYAR', 'Tombol pembayaran'], ['bar', 'Panel gelap', 'Topbar & layar total']];
@@ -3553,10 +3844,148 @@ function drawLogo() {
     '<div class="actions"><label class="btn btn-sm" style="cursor:pointer">' + (s.store_logo ? 'Ganti logo' : 'Unggah logo') + '<input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp" class="sr" data-chg="logoPick"></label>' + (s.store_logo ? '<button type="button" class="btn btn-sm btn-danger" data-act="logoDel">Hapus</button>' : '') + '</div>' +
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
+/* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
+const APP_BUILD = '1.4.0';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
+function canUpd() { return /^https?:$/.test(location.protocol); }
+function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
+function updTried(v) { try { return sessionStorage.getItem('ksr_updtry') === v; } catch (e) { return false; } }
+/* aman memuat ulang = tidak sedang ada keranjang, dialog, atau isian yang terbuka */
+function updSafe() {
+  if (!S.user) { return true; }
+  const a = document.activeElement;
+  return !S.cart.length && !modals.length && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+function updCardHtml() {
+  return '<div class="card" id="updCard"><div class="card-head"><h2>Pembaruan aplikasi</h2><span class="muted" style="font-size:13px">Versi terpasang: <b>' + esc(APP_BUILD) + '</b></span></div><div class="card-body" id="updBody"></div></div>';
+}
+function drawUpd() {
+  const el = $('#updBody'); if (!el) { return; }
+  const last = UPD.last ? new Date(UPD.last).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : 'belum pernah';
+  el.innerHTML = (S.upd
+      ? '<div class="pwd-banner" style="margin:0 0 12px"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">Perbarui sekarang</button></div>'
+      : '<p class="muted" style="margin:0 0 10px">' + (UPD.err ? '<span style="color:var(--danger)">' + esc(UPD.err) + '</span>' : 'Aplikasi sudah versi terbaru.') + '</p>') +
+    '<div class="muted" style="font-size:14px;margin-bottom:12px">Terakhir diperiksa: <b>' + esc(last) + '</b></div>' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="updAuto"' + (autoUpd() ? ' checked' : '') + '> <span>Perbarui otomatis saat ada versi baru (menunggu keranjang kosong)</span></label>' +
+    '<div class="actions"><button type="button" class="btn btn-primary" data-act="updCheck"' + (UPD.checking ? ' disabled' : '') + '>' + (UPD.checking ? 'Memeriksa…' : 'Periksa update') + '</button></div>' +
+    '<p class="page-note" style="margin:12px 0 0">Data transaksi tidak hilang saat pembaruan. Aplikasi tetap bisa dipakai offline; pembaruan diambil saat ada internet.</p>';
+  const cb = $('#updAuto'); if (cb) { cb.onchange = () => { store.set('ksr_autoupd', cb.checked ? '1' : '0'); toast(cb.checked ? 'Pembaruan otomatis aktif.' : 'Pembaruan otomatis dimatikan.', 'ok'); }; }
+}
+async function checkUpdate(manual) {
+  if (!canUpd()) { if (manual) { toast('Pembaruan hanya tersedia saat aplikasi dibuka lewat alamat web.', 'err'); } return false; }
+  if (UPD.checking) { return false; }
+  if (navigator.onLine === false) { UPD.err = 'Tidak ada koneksi internet.'; if (manual) { toast(UPD.err, 'err'); } drawUpd(); return false; }
+  UPD.checking = true; UPD.err = ''; drawUpd();
+  let found = null;
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) { throw new Error('Server menjawab HTTP ' + r.status); }
+    const j = await r.json(), v = String((j && j.version) || '');
+    if (!v) { throw new Error('Berkas version.json tidak valid.'); }
+    UPD.last = Date.now(); store.set('ksr_updlast', String(UPD.last));
+    try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) { reg.update().catch(() => {}); } } catch (e) {}
+    if (v !== APP_BUILD) { found = { version: v, notes: String(j.notes || '') }; S.upd = found; } else { S.upd = null; }
+  } catch (e) { UPD.err = 'Gagal memeriksa update: ' + ((e && e.message) || 'cek internet'); }
+  UPD.checking = false; renderBanner(); drawUpd();
+  if (manual) {
+    if (UPD.err) { toast(UPD.err, 'err'); }
+    else if (!found) { toast('Sudah versi terbaru (' + APP_BUILD + ').', 'ok'); }
+    else if (await confirmBox({ title: 'Versi ' + found.version + ' tersedia', message: esc(found.notes || 'Perbaikan dan peningkatan.') + '<br><br>Perbarui sekarang? Aplikasi akan dimuat ulang' + (S.user && S.cart.length ? ', <b>keranjang yang sedang dibuka akan dikosongkan</b>' : '') + '.', ok: 'Perbarui sekarang' })) { applyUpdate(); }
+  } else if (found && autoUpd() && updSafe() && !updTried(found.version)) { applyUpdate(); }
+  return !!found;
+}
+async function applyUpdate() {
+  const v = S.upd && S.upd.version; if (!v) { return; }
+  try { sessionStorage.setItem('ksr_updtry', v); } catch (e) {}
+  toast('Memperbarui ke versi ' + v + '…', 'ok');
+  try { const api = window.KASIRKU_DEMO && window.KASIRKU_DEMO.sync; if (api && api.status().connected) { await Promise.race([api.run(), new Promise(r => setTimeout(r, 4000))]); } } catch (e) {}
+  try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch (e) {}
+  try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) { await reg.update(); } } catch (e) {}
+  setTimeout(() => location.reload(), 600);
+}
+ACT.updCheck = () => { checkUpdate(true); };
+ACT.updNow = () => { applyUpdate(); };
+if (canUpd()) {
+  setTimeout(() => checkUpdate(false), 4000);
+  setInterval(() => checkUpdate(false), 30 * 60 * 1000);
+  setInterval(() => { if (S.upd && autoUpd() && updSafe() && !updTried(S.upd.version)) { applyUpdate(); } }, 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - UPD.last > 5 * 60 * 1000) { checkUpdate(false); } });
+  window.addEventListener('online', () => { if (Date.now() - UPD.last > 60 * 1000) { checkUpdate(false); } });
+}
+/* ---------- Sinkron Supabase (opsional) ---------- */
+const SY = () => (window.KASIRKU_DEMO && window.KASIRKU_DEMO.sync) || null;
+function syncCardHtml() {
+  return '<div class="card" id="syncCard"><div class="card-head"><h2>Sinkron Supabase</h2><span class="muted" style="font-size:13px">Opsional · tetap bisa offline</span></div><div class="card-body" id="syncBody"></div></div>';
+}
+function drawSync() {
+  const el = $('#syncBody'), api = SY(); if (!el || !api) { return; }
+  const s = api.status();
+  if (!s.connected) {
+    el.innerHTML = '<p class="muted" style="margin:0 0 12px">Mode sekarang: <b>offline saja</b> — data hanya ada di perangkat ini. Hubungkan ke Supabase agar beberapa HP/komputer di satu toko memakai data yang sama (stok, produk, transaksi). Aplikasi tetap jalan tanpa internet; perubahan dikirim otomatis begitu online.</p>' +
+      '<label class="field"><span>Kode sambung dari perangkat lain (opsional, mengisi kolom di bawah otomatis)</span><input id="syCode" type="text" placeholder="PNP1.…" autocomplete="off" spellcheck="false"></label>' +
+      '<div class="grid2"><label class="field"><span>URL project Supabase</span><input id="syUrl" type="text" placeholder="https://xxxx.supabase.co" autocomplete="off" spellcheck="false"></label>' +
+      '<label class="field"><span>Anon / publishable key</span><input id="syKey" type="text" placeholder="eyJ… atau sb_publishable_…" autocomplete="off" spellcheck="false"></label></div>' +
+      '<label class="field"><span>Kode toko (hanya untuk “Gabung”)</span><input id="syStore" type="text" autocomplete="off" spellcheck="false"></label>' +
+      '<div class="actions" style="margin-top:6px"><button type="button" class="btn btn-primary" data-act="syCreate">Buat toko baru &amp; unggah data ini</button><button type="button" class="btn" data-act="syJoin">Gabung toko yang sudah ada…</button></div>' +
+      '<p class="page-note" style="margin:14px 0 0">Sekali saja: jalankan <b>supabase/pinapos_sync.sql</b> di Supabase → SQL Editor. Isi hanya anon/publishable key — <b>jangan</b> memakai service_role key.</p>';
+    const code = $('#syCode');
+    code.oninput = () => { const c = api.parseCode(code.value); if (c) { $('#syUrl').value = c.url; $('#syKey').value = c.key; $('#syStore').value = c.store; } };
+    return;
+  }
+  const state = s.paused ? 'Dijeda' : s.running ? 'Menyinkron…' : !s.online ? 'Offline — menunggu internet' : s.err ? 'Terhubung (ada kendala)' : 'Terhubung';
+  el.innerHTML = '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><span class="badge ' + (s.err || s.paused || !s.online ? '' : 'ok') + '">' + esc(state) + '</span><span class="muted">Project: ' + esc(s.host) + '</span><span class="muted">Huruf perangkat ini: <b>' + esc(s.tag) + '</b> (muncul di nomor invoice)</span></div>' +
+    '<div class="muted" style="font-size:14px;line-height:1.7">Menunggu dikirim: <b>' + s.pending + '</b> perubahan<br>Sinkron terakhir: <b>' + (s.last ? esc(dmyhm(s.last)) : 'belum ada') + '</b>' +
+    (s.err ? '<br><span style="color:var(--danger)">Gagal terakhir: ' + esc(s.err) + '</span>' : '') + '</div>' +
+    '<div class="actions" style="margin-top:14px;flex-wrap:wrap"><button type="button" class="btn btn-primary" data-act="sySync">Sinkron sekarang</button>' +
+    '<button type="button" class="btn" data-act="syPause">' + (s.paused ? 'Lanjutkan sinkron' : 'Jeda sinkron') + '</button>' +
+    '<button type="button" class="btn" data-act="syCopy">Salin kode sambung</button>' +
+    '<button type="button" class="btn btn-danger" data-act="syOff">Putuskan</button></div>' +
+    '<p class="page-note" style="margin:14px 0 0">Kode sambung = kunci akses data toko. Berikan hanya ke perangkat kasir Anda sendiri. Putuskan tidak menghapus data di perangkat ini.</p>';
+}
+async function syConnect(btn, mode) {
+  const api = SY(); if (!api) { return; }
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'Menyambung…';
+  try {
+    const r = await api.connect({ url: $('#syUrl').value, key: $('#syKey').value, store: $('#syStore').value, mode, label: (navigator.platform || '') + ' ' + new Date().toISOString().slice(0, 10) });
+    if (r.joined) { toast('Bergabung sebagai perangkat ' + r.tag + '. Memuat ulang…', 'ok'); store.del('ksr_tok'); setTimeout(() => location.reload(), 800); return; }
+    toast('Toko dibuat. Salin “kode sambung” untuk perangkat lain.', 'ok'); drawSync();
+  } catch (e) { toast(e.message || 'Gagal menyambung.', 'err'); btn.disabled = false; btn.textContent = old; }
+}
+ACT.syCreate = b => syConnect(b, 'create');
+ACT.syJoin = async b => {
+  if (!await confirmBox({ title: 'Gabung ke toko yang sudah ada?', message: 'Semua data di <b>perangkat ini</b> (produk, transaksi, pengguna) akan <b>diganti</b> dengan data toko. Transaksi di perangkat ini yang belum tersinkron akan hilang.', ok: 'Ya, gabung', danger: true })) { return; }
+  syConnect(b, 'join');
+};
+ACT.sySync = async b => {
+  const api = SY(); b.disabled = true;
+  const ok = await api.run(true); drawSync();
+  toast(ok ? 'Sinkron selesai.' : (api.status().err || 'Belum bisa sinkron sekarang (offline atau dijeda).'), ok ? 'ok' : 'err');
+};
+ACT.syPause = () => { const api = SY(); api.setPaused(!api.status().paused); drawSync(); };
+ACT.syCopy = async () => {
+  const c = SY().code();
+  try { await navigator.clipboard.writeText(c); toast('Kode sambung disalin.', 'ok'); } catch (e) { window.prompt('Salin kode sambung ini:', c); }
+};
+ACT.syOff = async () => {
+  if (!await confirmBox({ title: 'Putuskan dari Supabase?', message: 'Aplikasi kembali ke mode <b>offline saja</b>. Data di perangkat ini tetap ada, tetapi perubahan berikutnya tidak lagi dikirim. Perubahan yang belum terkirim tidak akan dikirim.', ok: 'Putuskan', danger: true })) { return; }
+  SY().disconnect(); drawSync(); toast('Terputus dari Supabase.', '');
+};
+/* data baru dari perangkat lain -> segarkan layar yang sedang terbuka (tanpa mengganggu yang sedang mengetik) */
+window.addEventListener('pinapos-sync', e => {
+  if (!S.user) { return; }
+  if (S.view === 'pengaturan' && $('#syncBody') && !modals.length && !(document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))) { drawSync(); }
+  if (!(e.detail && e.detail.changed) || modals.length) { return; }
+  markStale();
+  if (S.view === 'kasir') { refreshCatalog(true); return; }
+  if (!['riwayat', 'dashboard', 'produk', 'pelanggan', 'pengguna'].includes(S.view)) { return; }
+  if (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) { return; }
+  const v = $('#view'), y = v ? v.scrollTop : 0, w = window.scrollY;
+  go(S.view); setTimeout(() => { if (v) { v.scrollTop = y; } window.scrollTo(0, w); }, 300);
+});
 function invPreview() {
   const e = $('#invPrev'); if (!e) { return; }
   const code = ($('#sCode').value || '200').replace(/[^A-Za-z0-9]/g, ''), n = moneyVal($('#sNext').value) || 1;
-  e.textContent = ST().inv_yy + '-' + code + '-' + String(n).padStart(6, '0');
+  e.textContent = ST().inv_yy + '-' + code + '-' + ((SY() && SY().status().tag) || '') + String(n).padStart(6, '0');
 }
 function shrinkImage(file) {
   return new Promise((resolve, reject) => {
