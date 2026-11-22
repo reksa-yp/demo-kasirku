@@ -3910,7 +3910,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.3';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.4';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
@@ -3938,11 +3938,12 @@ function drawUpd() {
 }
 /* APK: berkas web ikut terbungkus di dalam APK, jadi update = pasang APK baru dari GitHub Releases */
 function verCmp(a, b) { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) { return d > 0 ? 1 : -1; } } return 0; }
+let APKURL = '';
 async function latestApk() {
   const r = await fetch('https://api.github.com/repos/reksa-yp/demo-kasirku/releases?per_page=30', { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
   if (!r.ok) { throw new Error('GitHub menjawab HTTP ' + r.status); }
   let ver = '';
-  (await r.json() || []).forEach(rel => (rel.assets || []).forEach(a => { const m = /^(pinapos|kasirku)[^/]*?(\d+\.\d+\.\d+)\.apk$/i.exec(a.name); if (m && (!ver || verCmp(m[2], ver) > 0)) { ver = m[2]; } }));
+  (await r.json() || []).forEach(rel => (rel.assets || []).forEach(a => { const m = /^(pinapos|kasirku)[^/]*?(\d+\.\d+\.\d+)\.apk$/i.exec(a.name); if (m && (!ver || verCmp(m[2], ver) > 0)) { ver = m[2]; APKURL = a.browser_download_url || ''; } }));
   return ver;
 }
 function openDownloadPage() { const a = document.createElement('a'); a.href = DL_PAGE; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); }
@@ -3956,7 +3957,7 @@ async function checkUpdate(manual) {
     if (ANDROID) {
       const v = await latestApk();
       UPD.last = Date.now(); store.set('ksr_updlast', String(UPD.last));
-      if (v && verCmp(v, APP_UI_VERSION) > 0) { found = { version: v, apk: true, notes: 'Download APK terbaru lalu pasang. Data aman bila sudah sinkron Supabase atau sudah di-backup.' }; S.upd = found; } else { S.upd = null; }
+      if (v && verCmp(v, APP_UI_VERSION) > 0) { found = { version: v, apk: true, notes: 'APK baru akan diunduh lalu dipasang. Data aman bila sudah sinkron Supabase atau sudah di-backup.' }; S.upd = found; } else { S.upd = null; }
     } else {
     const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) { throw new Error('Server menjawab HTTP ' + r.status); }
@@ -3977,7 +3978,16 @@ async function checkUpdate(manual) {
 }
 async function applyUpdate() {
   const v = S.upd && S.upd.version; if (!v) { return; }
-  if (S.upd.apk) { openDownloadPage(); return; }
+  if (S.upd.apk) {
+    if (ANDROID && ANDROID.installApk && /^https:\/\/github\.com\/reksa-yp\/demo-kasirku\/releases\/download\//.test(APKURL)) {
+      // unduh APK di dalam aplikasi lalu buka pemasang Android; hasil lewat window.ksrApk
+      toast('Mengunduh APK ' + v + '…', 'ok');
+      try { const api = window.KASIRKU_DEMO && window.KASIRKU_DEMO.sync; if (api && api.status().connected) { await Promise.race([api.run(), new Promise(r => setTimeout(r, 3000))]); } } catch (e) {}
+      try { ANDROID.installApk(APKURL, 'PinaPos-' + v + '.apk'); } catch (e) { toast('Gagal memulai unduhan: ' + e.message, 'err'); openDownloadPage(); }
+      return;
+    }
+    openDownloadPage(); return;
+  }
   try { sessionStorage.setItem('ksr_updtry', v); } catch (e) {}
   toast('Memperbarui ke versi ' + v + '…', 'ok');
   try { const api = window.KASIRKU_DEMO && window.KASIRKU_DEMO.sync; if (api && api.status().connected) { await Promise.race([api.run(), new Promise(r => setTimeout(r, 4000))]); } } catch (e) {}
@@ -4134,6 +4144,11 @@ window.ksrSaved = (ok, msg) => {
 };
 window.ksrStorageError = e => toast('Data gagal disimpan ke HP: ' + (e && e.message || e) + '. Periksa sisa memori HP.', 'err');
 window.ksrBtPerm = ok => { if (!ok) { toast('Izin "Perangkat sekitar" ditolak — printer Bluetooth tidak bisa dipakai.', 'err'); } };
+window.ksrApk = (stage, msg) => {
+  if (stage === 'perm') { toast('Izinkan "Pasang aplikasi dari sumber ini" untuk PinaPos, lalu tekan Perbarui lagi.', 'err'); }
+  else if (stage === 'ready') { toast('APK siap. Tekan "Pasang" pada layar Android.', 'ok'); }
+  else { toast(msg || 'Gagal mengunduh pembaruan.', 'err'); }
+};
 window.ksrFlush = () => { if (BKSRC) { BKSRC.flush(); } };
 Object.assign(ACT, {
   backupNow(t) {
