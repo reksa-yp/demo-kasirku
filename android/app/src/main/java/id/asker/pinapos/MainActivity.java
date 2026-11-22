@@ -277,7 +277,7 @@ public class MainActivity extends Activity {
                     }
                     byte[] data = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
                     BluetoothDevice dev = ad.getRemoteDevice(addr);
-                    ad.cancelDiscovery();
+                    try { ad.cancelDiscovery(); } catch (SecurityException ignored) { }   // butuh izin SCAN di Android 12+; tidak wajib
                     try {
                         sock = dev.createRfcommSocketToServiceRecord(SPP);
                         sock.connect();
