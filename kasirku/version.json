@@ -1,4 +1,4 @@
 {
-  "version": "1.4.5",
-  "notes": "Perbaiki cetak Bluetooth di Android 12+."
+  "version": "1.4.6",
+  "notes": "PWA: manifest, ikon, petunjuk pasang di iPhone & Android."
 }
