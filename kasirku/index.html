@@ -15,7 +15,10 @@
 <meta property="og:title" content="PinaPos Demo">
 <meta property="og:description" content="Demo aplikasi kasir toko: penjualan, stok, invoice, laporan, mode offline.">
 <link rel="icon" href="../assets/pinapos.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="../assets/pinapos.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="PinaPos">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#173a2a">
 <style>
 /* ===== PinaPos - tampilan ===== */
@@ -3801,7 +3804,7 @@ function viewPengaturan() {
   const s = ST();
   const f = (id, label, val, ph, extra) => '<label class="field"><span>' + label + '</span><input id="' + id + '" type="text" value="' + esc(val) + '" placeholder="' + esc(ph || '') + '" ' + (extra || '') + '></label>';
   $('#view').innerHTML = '<div class="page">' + pageHead('Pengaturan', 'Identitas usaha, warna tema, invoice, dan struk.', '<button type="button" class="btn btn-primary" data-act="setSave">Simpan pengaturan</button>') +
-    '<div class="stack">' + (BKSRC ? backupCardHtml() : '') + themeCardHtml() + (IS_DEMO ? syncCardHtml() : '') + (canUpd() ? updCardHtml() : '') +
+    '<div class="stack">' + (BKSRC ? backupCardHtml() : '') + installCardHtml() + themeCardHtml() + (IS_DEMO ? syncCardHtml() : '') + (canUpd() ? updCardHtml() : '') +
     '<div class="card"><div class="card-head"><h2>Identitas usaha & logo</h2></div><div class="card-body">' +
       '<div class="field"><span class="field-label">Logo (tampil di invoice, struk, dan menu)</span><div class="logo-box" id="logoBox"></div></div>' +
       f('sName', 'Nama usaha *', s.store_name, '', 'maxlength="100"') +
@@ -3825,6 +3828,17 @@ function viewPengaturan() {
     '<p class="page-note">' + (IS_LOCAL ? 'Aplikasi ini berjalan tanpa server: semua data tersimpan di HP ini. Lakukan <b>Backup data</b> secara rutin.' : IS_DEMO ? (SY() && SY().status().connected ? 'Data tersimpan di browser ini dan disinkronkan ke Supabase.' : 'Mode demo: data hanya tersimpan di browser ini.') : 'Data usaha tersimpan di database MySQL <b>kasirku</b> pada server XAMPP / hosting Anda. Backup rutin lewat phpMyAdmin → Export.') + '</p></div></div>';
   $('#sPaper').value = String(s.paper_width);
   drawLogo(); drawQris(); invPreview(); bindTheme(); if (IS_DEMO) { drawSync(); } drawUpd();
+}
+/** Petunjuk memasang PinaPos di layar utama iPhone/iPad/Android (PWA). Disembunyikan di APK dan bila sudah terpasang. */
+function installCardHtml() {
+  const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  if (ANDROID || standalone || !IS_DEMO) { return ''; }
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const steps = ios
+    ? '<li>Buka halaman ini di <b>Safari</b> (bukan Chrome/WhatsApp).</li><li>Ketuk tombol <b>Bagikan</b> (kotak dengan panah ke atas).</li><li>Pilih <b>Tambah ke Layar Utama</b>, lalu <b>Tambah</b>.</li><li>Buka PinaPos dari ikon di layar utama. Data tersimpan di iPhone dan bisa dipakai offline.</li>'
+    : '<li>Buka halaman ini di <b>Chrome</b>.</li><li>Ketuk menu <b>⋮</b> → <b>Instal aplikasi</b> / <b>Tambahkan ke layar utama</b>.</li><li>Buka PinaPos dari ikon di layar utama.</li>';
+  return '<div class="card" id="instCard"><div class="card-head"><h2>Pasang di HP (iPhone &amp; Android)</h2></div><div class="card-body"><ol class="muted" style="margin:0;padding-left:20px;line-height:1.6">' + steps + '</ol>' +
+    '<p class="muted" style="margin:10px 0 0;font-size:13px">' + (ios ? 'Catatan iPhone: printer thermal Bluetooth belum bisa dipakai langsung dari iPhone; cetak lewat printer AirPrint/Wi-Fi atau bagikan struk sebagai PDF.' : 'Untuk printer thermal Bluetooth di Android, gunakan aplikasi APK PinaPos.') + '</p></div></div>';
 }
 function themeCardHtml() {
   const colors = [['brand', 'Warna utama', 'Tombol, menu aktif, harga'], ['accent', 'Warna aksen', 'Sorotan & grafik hari ini'], ['pay', 'Tombol BAYAR', 'Tombol pembayaran'], ['bar', 'Panel gelap', 'Topbar & layar total']];
@@ -3910,7 +3924,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.5';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.6';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
