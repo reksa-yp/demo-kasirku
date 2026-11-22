@@ -54,8 +54,11 @@ jobs:
       - name: Siapkan kunci tanda tangan tetap
         env:
           KS_B64: ${{ secrets.PINAPOS_KEYSTORE_B64 }}
+          KS_PW: ${{ secrets.PINAPOS_KEY_PASSWORD }}
         run: |
-          if [ -n "$KS_B64" ]; then
+          if [ -n "$KS_B64" ] && [ -z "$KS_PW" ]; then
+            echo "::warning::PINAPOS_KEY_PASSWORD kosong/belum dibuat; kunci tetap dilewati, APK memakai kunci debug."
+          elif [ -n "$KS_B64" ]; then
             echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/pinapos.jks"
             echo "PINAPOS_KEYSTORE_FILE=$RUNNER_TEMP/pinapos.jks" >> "$GITHUB_ENV"
             echo "Memakai kunci tanda tangan tetap."
