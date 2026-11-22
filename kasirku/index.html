@@ -2954,7 +2954,7 @@ function renderBanner() {
   const b = $('#banner'); if (!b) { return; }
   const bk = IS_LOCAL && S.user && S.user.role === 'admin' && store.get('ksr_bkdirty') === '1' && (Date.now() - Number(store.get('ksr_lastbackup') || 0) > 3 * 864e5);
   b.innerHTML = (bk ? '<div class="pwd-banner" role="status"><span><b>Data hanya ada di HP ini.</b> ' + (store.get('ksr_lastbackup') ? 'Backup terakhir ' + new Date(Number(store.get('ksr_lastbackup'))).toLocaleDateString('id-ID') + '.' : 'Belum pernah backup.') + '</span><button type="button" class="btn btn-sm" data-act="backupNow">Backup sekarang</button></div>' : '') +
-    (S.upd ? '<div class="pwd-banner" role="status"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">Perbarui sekarang</button></div>' : '') +
+    (S.upd ? '<div class="pwd-banner" role="status"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">' + (S.upd.apk ? 'Download APK' : 'Perbarui sekarang') + '</button></div>' : '') +
     (!NET.online ? '<div class="off-banner" role="status"><span><b>Mode offline.</b> Transaksi disimpan di perangkat ini dan dikirim otomatis saat server tersambung.</span><button type="button" class="btn btn-sm" data-act="netInfo">Lihat antrean</button></div>' : '') +
     (S.defaultPw && S.user && S.user.role === 'admin' ? '<div class="pwd-banner"><span>Password akun <b>admin</b> masih bawaan (admin123).</span><button type="button" class="btn btn-sm" data-act="pwd">Ganti sekarang</button></div>' : '');
 }
@@ -3870,7 +3870,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.1';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.2';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
@@ -3882,20 +3882,30 @@ function updSafe() {
   return !S.cart.length && !modals.length && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 function updCardHtml() {
-  return '<div class="card" id="updCard"><div class="card-head"><h2>Pembaruan aplikasi</h2><span class="muted" style="font-size:13px">Versi terpasang: <b>' + esc(APP_BUILD) + '</b></span></div><div class="card-body" id="updBody"></div></div>';
+  return '<div class="card" id="updCard"><div class="card-head"><h2>Pembaruan aplikasi</h2><span class="muted" style="font-size:13px">Versi terpasang: <b>' + esc(ANDROID ? APP_UI_VERSION : APP_BUILD) + '</b></span></div><div class="card-body" id="updBody"></div></div>';
 }
 function drawUpd() {
   const el = $('#updBody'); if (!el) { return; }
   const last = UPD.last ? new Date(UPD.last).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : 'belum pernah';
   el.innerHTML = (S.upd
-      ? '<div class="pwd-banner" style="margin:0 0 12px"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">Perbarui sekarang</button></div>'
+      ? '<div class="pwd-banner" style="margin:0 0 12px"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">' + (S.upd.apk ? 'Download APK' : 'Perbarui sekarang') + '</button></div>'
       : '<p class="muted" style="margin:0 0 10px">' + (UPD.err ? '<span style="color:var(--danger)">' + esc(UPD.err) + '</span>' : 'Aplikasi sudah versi terbaru.') + '</p>') +
     '<div class="muted" style="font-size:14px;margin-bottom:12px">Terakhir diperiksa: <b>' + esc(last) + '</b></div>' +
-    '<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="updAuto"' + (autoUpd() ? ' checked' : '') + '> <span>Perbarui otomatis saat ada versi baru (menunggu keranjang kosong)</span></label>' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="updAuto"' + (autoUpd() ? ' checked' : '') + '> <span>' + (ANDROID ? 'Beri tahu otomatis saat ada APK baru' : 'Perbarui otomatis saat ada versi baru (menunggu keranjang kosong)') + '</span></label>' +
     '<div class="actions"><button type="button" class="btn btn-primary" data-act="updCheck"' + (UPD.checking ? ' disabled' : '') + '>' + (UPD.checking ? 'Memeriksa…' : 'Periksa update') + '</button></div>' +
     '<p class="page-note" style="margin:12px 0 0">Data transaksi tidak hilang saat pembaruan. Aplikasi tetap bisa dipakai offline; pembaruan diambil saat ada internet.</p>';
   const cb = $('#updAuto'); if (cb) { cb.onchange = () => { store.set('ksr_autoupd', cb.checked ? '1' : '0'); toast(cb.checked ? 'Pembaruan otomatis aktif.' : 'Pembaruan otomatis dimatikan.', 'ok'); }; }
 }
+/* APK: berkas web ikut terbungkus di dalam APK, jadi update = pasang APK baru dari GitHub Releases */
+function verCmp(a, b) { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) { return d > 0 ? 1 : -1; } } return 0; }
+async function latestApk() {
+  const r = await fetch('https://api.github.com/repos/reksa-yp/demo-kasirku/releases?per_page=30', { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+  if (!r.ok) { throw new Error('GitHub menjawab HTTP ' + r.status); }
+  let ver = '';
+  (await r.json() || []).forEach(rel => (rel.assets || []).forEach(a => { const m = /^(pinapos|kasirku)[^/]*?(\d+\.\d+\.\d+)\.apk$/i.exec(a.name); if (m && (!ver || verCmp(m[2], ver) > 0)) { ver = m[2]; } }));
+  return ver;
+}
+function openDownloadPage() { const a = document.createElement('a'); a.href = DL_PAGE; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); }
 async function checkUpdate(manual) {
   if (!canUpd()) { if (manual) { toast('Pembaruan hanya tersedia saat aplikasi dibuka lewat alamat web.', 'err'); } return false; }
   if (UPD.checking) { return false; }
@@ -3903,6 +3913,11 @@ async function checkUpdate(manual) {
   UPD.checking = true; UPD.err = ''; drawUpd();
   let found = null;
   try {
+    if (ANDROID) {
+      const v = await latestApk();
+      UPD.last = Date.now(); store.set('ksr_updlast', String(UPD.last));
+      if (v && verCmp(v, APP_UI_VERSION) > 0) { found = { version: v, apk: true, notes: 'Download APK terbaru lalu pasang. Data aman bila sudah sinkron Supabase atau sudah di-backup.' }; S.upd = found; } else { S.upd = null; }
+    } else {
     const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) { throw new Error('Server menjawab HTTP ' + r.status); }
     const j = await r.json(), v = String((j && j.version) || '');
@@ -3910,17 +3925,19 @@ async function checkUpdate(manual) {
     UPD.last = Date.now(); store.set('ksr_updlast', String(UPD.last));
     try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) { reg.update().catch(() => {}); } } catch (e) {}
     if (v !== APP_BUILD) { found = { version: v, notes: String(j.notes || '') }; S.upd = found; } else { S.upd = null; }
+    }
   } catch (e) { UPD.err = 'Gagal memeriksa update: ' + ((e && e.message) || 'cek internet'); }
   UPD.checking = false; renderBanner(); drawUpd();
   if (manual) {
     if (UPD.err) { toast(UPD.err, 'err'); }
-    else if (!found) { toast('Sudah versi terbaru (' + APP_BUILD + ').', 'ok'); }
-    else if (await confirmBox({ title: 'Versi ' + found.version + ' tersedia', message: esc(found.notes || 'Perbaikan dan peningkatan.') + '<br><br>Perbarui sekarang? Aplikasi akan dimuat ulang' + (S.user && S.cart.length ? ', <b>keranjang yang sedang dibuka akan dikosongkan</b>' : '') + '.', ok: 'Perbarui sekarang' })) { applyUpdate(); }
-  } else if (found && autoUpd() && updSafe() && !updTried(found.version)) { applyUpdate(); }
+    else if (!found) { toast('Sudah versi terbaru (' + (ANDROID ? APP_UI_VERSION : APP_BUILD) + ').', 'ok'); }
+    else if (await confirmBox({ title: 'Versi ' + found.version + ' tersedia', message: esc(found.notes || 'Perbaikan dan peningkatan.') + '<br><br>' + (found.apk ? 'Buka halaman download sekarang?' : 'Perbarui sekarang? Aplikasi akan dimuat ulang' + (S.user && S.cart.length ? ', <b>keranjang yang sedang dibuka akan dikosongkan</b>' : '') + '.'), ok: found.apk ? 'Download APK' : 'Perbarui sekarang' })) { applyUpdate(); }
+  } else if (found && !found.apk && autoUpd() && updSafe() && !updTried(found.version)) { applyUpdate(); }
   return !!found;
 }
 async function applyUpdate() {
   const v = S.upd && S.upd.version; if (!v) { return; }
+  if (S.upd.apk) { openDownloadPage(); return; }
   try { sessionStorage.setItem('ksr_updtry', v); } catch (e) {}
   toast('Memperbarui ke versi ' + v + '…', 'ok');
   try { const api = window.KASIRKU_DEMO && window.KASIRKU_DEMO.sync; if (api && api.status().connected) { await Promise.race([api.run(), new Promise(r => setTimeout(r, 4000))]); } } catch (e) {}
@@ -3933,7 +3950,7 @@ ACT.updNow = () => { applyUpdate(); };
 if (canUpd()) {
   setTimeout(() => checkUpdate(false), 4000);
   setInterval(() => checkUpdate(false), 30 * 60 * 1000);
-  setInterval(() => { if (S.upd && autoUpd() && updSafe() && !updTried(S.upd.version)) { applyUpdate(); } }, 60 * 1000);
+  setInterval(() => { if (S.upd && !S.upd.apk && autoUpd() && updSafe() && !updTried(S.upd.version)) { applyUpdate(); } }, 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - UPD.last > 5 * 60 * 1000) { checkUpdate(false); } });
   window.addEventListener('online', () => { if (Date.now() - UPD.last > 60 * 1000) { checkUpdate(false); } });
 }
