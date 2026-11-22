@@ -1,4 +1,4 @@
 {
-  "version": "1.4.4",
-  "notes": "Update APK: unduh & pasang dari dalam aplikasi."
+  "version": "1.4.5",
+  "notes": "Perbaiki cetak Bluetooth di Android 12+."
 }
