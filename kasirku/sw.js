@@ -3,7 +3,7 @@
    sehingga tidak tertahan cache HTTP), cadangan dari cache saat offline.
    Hanya file satu domain dengan halaman ini yang disimpan; panggilan ke Supabase tidak disentuh.
    Baris di bawah diubah oleh tools/bump-version.sh supaya browser mendeteksi service worker baru. */
-const CACHE = 'pinapos-demo-v1.4.0';
+const CACHE = 'pinapos-demo-v1.4.3';
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', './index.html'])).then(() => self.skipWaiting()));

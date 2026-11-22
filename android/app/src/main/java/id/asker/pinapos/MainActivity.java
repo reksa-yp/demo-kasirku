@@ -7,10 +7,15 @@
  */
 package id.asker.pinapos;
 
+import android.Manifest;
 import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
 import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -31,18 +36,23 @@ import android.widget.Toast;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.UUID;
 
 public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.androidplatform.net";
     private static final String BASE = "https://" + HOST + "/assets/www/" + BuildConfig.APP_DIR + "/";
     private static final int FILE_REQUEST = 7;
+    private static final int BT_REQUEST = 8;
+    private static final UUID SPP = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
     private WebView web;
     private WebView printWeb;               // disimpan agar tidak dibersihkan GC saat mencetak
@@ -136,6 +146,25 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == BT_REQUEST) {
+            final boolean ok = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            web.post(() -> web.evaluateJavascript("window.ksrBtPerm && window.ksrBtPerm(" + ok + ")", null));
+        }
+    }
+
+    private boolean btAllowed() {
+        return Build.VERSION.SDK_INT < 31
+                || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void notifyBt(boolean ok, String msg) {
+        final String js = "window.ksrBtDone && window.ksrBtDone(" + ok + "," + JSONObject.quote(msg) + ")";
+        web.post(() -> web.evaluateJavascript(js, null));
+    }
+
+    @Override
     public void onBackPressed() {
         if (web.canGoBack()) {
             web.goBack();
@@ -186,6 +215,94 @@ public class MainActivity extends Activity {
                 });
                 printWeb = pw;
                 pw.loadDataWithBaseURL(BASE, html, "text/html", "UTF-8", null);
+            });
+        }
+
+        /** Daftar printer Bluetooth yang sudah di-pairing di Android. Meminta izin "Perangkat sekitar" bila belum ada. */
+        @JavascriptInterface
+        public String btDevices() {
+            try {
+                BluetoothAdapter ad = BluetoothAdapter.getDefaultAdapter();
+                if (ad == null) {
+                    return "{\"ok\":false,\"err\":\"nobt\"}";
+                }
+                if (!btAllowed()) {
+                    runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT}, BT_REQUEST));
+                    return "{\"ok\":false,\"err\":\"perm\"}";
+                }
+                if (!ad.isEnabled()) {
+                    return "{\"ok\":false,\"err\":\"off\"}";
+                }
+                JSONArray arr = new JSONArray();
+                Set<BluetoothDevice> bonded = ad.getBondedDevices();
+                if (bonded != null) {
+                    for (BluetoothDevice d : bonded) {
+                        JSONObject o = new JSONObject();
+                        o.put("name", d.getName() == null ? d.getAddress() : d.getName());
+                        o.put("addr", d.getAddress());
+                        arr.put(o);
+                    }
+                }
+                return new JSONObject().put("ok", true).put("list", arr).toString();
+            } catch (Exception e) {
+                return "{\"ok\":false,\"err\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}";
+            }
+        }
+
+        /** Kirim data ESC/POS (base64) langsung ke printer Bluetooth Classic (SPP). Hasil lewat window.ksrBtDone. */
+        @JavascriptInterface
+        public void btPrint(final String addr, final String b64) {
+            new Thread(() -> {
+                BluetoothSocket sock = null;
+                try {
+                    BluetoothAdapter ad = BluetoothAdapter.getDefaultAdapter();
+                    if (ad == null || !ad.isEnabled()) {
+                        notifyBt(false, "Bluetooth HP belum menyala.");
+                        return;
+                    }
+                    if (!btAllowed()) {
+                        runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT}, BT_REQUEST));
+                        notifyBt(false, "Izinkan akses \"Perangkat sekitar\", lalu coba cetak lagi.");
+                        return;
+                    }
+                    byte[] data = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+                    BluetoothDevice dev = ad.getRemoteDevice(addr);
+                    ad.cancelDiscovery();
+                    try {
+                        sock = dev.createRfcommSocketToServiceRecord(SPP);
+                        sock.connect();
+                    } catch (Exception first) {
+                        try { if (sock != null) { sock.close(); } } catch (Exception ignored) { }
+                        // cadangan untuk printer murah yang tidak mengiklankan layanan SPP
+                        sock = (BluetoothSocket) dev.getClass().getMethod("createRfcommSocket", int.class).invoke(dev, 1);
+                        sock.connect();
+                    }
+                    OutputStream os = sock.getOutputStream();
+                    int off = 0;
+                    while (off < data.length) {
+                        int n = Math.min(512, data.length - off);
+                        os.write(data, off, n);
+                        os.flush();
+                        off += n;
+                        Thread.sleep(30);
+                    }
+                    Thread.sleep(500);   // beri waktu printer menerima sisa buffer sebelum koneksi ditutup
+                    notifyBt(true, "ok");
+                } catch (SecurityException e) {
+                    notifyBt(false, "Izin Bluetooth ditolak. Aktifkan \"Perangkat sekitar\" untuk aplikasi ini di Setelan.");
+                } catch (Exception e) {
+                    notifyBt(false, "Gagal tersambung ke printer: " + e.getMessage() + ". Pastikan printer menyala, dekat, dan tidak sedang dipakai aplikasi lain.");
+                } finally {
+                    try { if (sock != null) { sock.close(); } } catch (Exception ignored) { }
+                }
+            }).start();
+        }
+
+        /** Buka setelan Bluetooth Android (untuk pairing printer). */
+        @JavascriptInterface
+        public void btSettings() {
+            runOnUiThread(() -> {
+                try { startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)); } catch (Exception e) { toast("Tidak dapat membuka setelan Bluetooth."); }
             });
         }
 

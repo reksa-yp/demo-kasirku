@@ -1775,7 +1775,31 @@ function createDemoBackend(storage, logoDataUrl) {
   return {
     handle: function (action, token, payload) { return backend.handle(action, token, payload); },
     reset: function () { try { storage.clear(); } catch (e) {} build(true); save(); },
-    sync: sync.api
+    sync: sync.api,
+    flush: function () { flush(); },
+    stats: function () { var t = state.tables; return { transactions: t.Transactions.length, products: t.Products.length, customers: t.Customers.length }; },
+    exportData: function () {
+      flush();
+      var t = {}; Object.keys(state.tables).forEach(function (k) { t[k] = cloneJ_(state.tables[k]); });
+      return { app: 'kasirku', v: 1, exported_at: new Date().toISOString(), tables: t, kv: cloneJ_(state.kv) };
+    },
+    restoreData: function (b) {
+      if (!b || b.app !== 'kasirku' || !b.tables || typeof b.tables !== 'object') { return Promise.reject(new Error('File ini bukan backup PinaPos.')); }
+      if (state.sync && state.sync.cfg) { return Promise.reject(new Error('Putuskan sambungan Supabase dulu (Pengaturan > Sinkron Supabase), pulihkan, lalu sambungkan lagi dengan "Buat toko baru".')); }
+      var t = {};
+      try {
+        Object.keys(SCHEMA).forEach(function (k) {
+          if (k === 'Settings') { return; }
+          var rows = b.tables[k] === undefined ? [] : b.tables[k];
+          if (!Array.isArray(rows)) { throw new Error('Backup rusak: tabel ' + k + ' tidak valid.'); }
+          t[k] = rows.map(function (r) { return coerceRow_(k, r || {}); });
+        });
+      } catch (e) { return Promise.reject(e); }
+      if (!t.Users.length) { return Promise.reject(new Error('Backup tidak berisi akun pengguna, pemulihan dibatalkan.')); }
+      var kv = {}; Object.keys(b.kv || {}).forEach(function (k) { kv[k] = String(b.kv[k]); });
+      state.tables = t; state.kv = kv; cache = {};
+      flush(); return Promise.resolve();
+    }
   };
 }
 
@@ -2041,6 +2065,7 @@ const S = {
 const IS_DEMO = !!window.KASIRKU_DEMO;
 /* Mode aplikasi Android (tanpa server): data di HP, lihat local-platform.js */
 const IS_LOCAL = !!window.KASIRKU_LOCAL;
+const BKSRC = window.KASIRKU_LOCAL || window.KASIRKU_DEMO || null;   // sumber ekspor/pulihkan file
 const ANDROID = window.KasirkuAndroid || null;
 const API_URL = 'api.php';
 
@@ -2276,6 +2301,7 @@ function confirmBox(o) {
 
 /* ---------- cetak (struk, invoice, laporan) ---------- */
 function printDoc(html, pageCss) {
+  if (ANDROID && ABT.ok && /class="receipt\b/.test(html) && PRN.mode() !== 'browser') { return printThermalHtml(html, /class="receipt w58\b/.test(html) ? 58 : 80); }
   if (ANDROID && ANDROID.print) {
     // Aplikasi Android: kirim dokumen lengkap ke layanan cetak Android (printer, RawBT, atau Simpan PDF)
     const css = $$('style').filter(x => x.id !== 'pageStyle').map(x => x.textContent).join('\n');
@@ -2379,12 +2405,35 @@ function openReceiptPreview(t) {
  * ==================================================================== */
 const PRN_PFX = 'ksr_';
 const PRN = {
-  mode() { const m = store.get(PRN_PFX + 'prn_mode'); return m === 'bt' || m === 'rawbt' ? m : 'browser'; },
+  mode() {
+    const m = store.get(PRN_PFX + 'prn_mode');
+    if (ABT.ok) { return m === 'rawbt' || m === 'browser' ? m : 'abt'; }   // APK: Bluetooth langsung via aplikasi (bawaan)
+    return m === 'bt' || m === 'rawbt' ? m : 'browser';
+  },
   setMode(m) { store.set(PRN_PFX + 'prn_mode', m); },
   cols() { return Number(store.get(PRN_PFX + 'prn_cols')) || 0; },
   logo() { return store.get(PRN_PFX + 'prn_logo') !== '0'; }
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** Printer Bluetooth Classic lewat jembatan APK (PinaPos Android). Tidak butuh RawBT maupun Web Bluetooth. */
+const ABT = {
+  ok: !!(ANDROID && ANDROID.btDevices && ANDROID.btPrint),
+  addr() { return store.get(PRN_PFX + 'prn_abt_addr') || ''; },
+  name() { return store.get(PRN_PFX + 'prn_abt_name') || ''; },
+  save(a, n) { store.set(PRN_PFX + 'prn_abt_addr', a); store.set(PRN_PFX + 'prn_abt_name', n || a); },
+  forget() { store.del(PRN_PFX + 'prn_abt_addr'); store.del(PRN_PFX + 'prn_abt_name'); },
+  devices() { try { return JSON.parse(ANDROID.btDevices()); } catch (e) { return { ok: false, err: String(e && e.message || e) }; } },
+  errText(r) { return r.err === 'perm' ? 'Izinkan akses "Perangkat sekitar" pada pop-up Android, lalu tekan Muat ulang daftar.' : r.err === 'off' ? 'Bluetooth HP belum menyala.' : r.err === 'nobt' ? 'HP ini tidak punya Bluetooth.' : 'Gagal membaca daftar printer: ' + r.err; },
+  send(bytes) {
+    return new Promise((resolve, reject) => {
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) { bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); }
+      const t = setTimeout(() => { window.ksrBtDone = null; reject(new Error('Printer tidak merespons (waktu habis).')); }, 40000);
+      window.ksrBtDone = (ok, msg) => { clearTimeout(t); window.ksrBtDone = null; ok ? resolve() : reject(new Error(msg)); };
+      try { ANDROID.btPrint(ABT.addr(), btoa(bin)); } catch (e) { clearTimeout(t); reject(e); }
+    });
+  }
+};
 /** Printer thermal hanya paham ASCII: buang aksen & ganti simbol unicode. */
 const asciiFold = s => String(s == null ? '' : s).normalize('NFKD').replace(/[̀-ͯ]/g, '')
   .replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-')
@@ -2624,6 +2673,7 @@ function rawbtSend(bytes) {
 async function printThermalHtml(html, paper) {
   const mode = PRN.mode();
   try {
+    if (mode === 'abt' && !ABT.addr()) { if (!document.getElementById('prnDetail')) { openPrinterSetup(); } throw new Error('Pilih dulu printer Bluetooth Anda.'); }
     if (mode === 'bt') {
       if (!BT.supported()) { throw new Error(btUnsupportedMsg()); }
       if (!BT.device) { await BT.restore(); }
@@ -2631,6 +2681,7 @@ async function printThermalHtml(html, paper) {
     }
     const bytes = await escFromReceiptHtml(html, paper);
     if (mode === 'rawbt') { rawbtSend(bytes); return; }
+    if (mode === 'abt') { toast('Mengirim ke ' + ABT.name() + '…'); await ABT.send(bytes); toast('Struk terkirim ke printer.', 'ok'); return; }
     toast('Mengirim ke ' + BT.name() + '…');
     await BT.write(bytes);
     toast('Struk terkirim ke printer.', 'ok');
@@ -2638,16 +2689,16 @@ async function printThermalHtml(html, paper) {
     toast(e.message || String(e), 'err');
   }
 }
-function prnModeLabel() { return { bt: 'Bluetooth langsung', rawbt: 'Aplikasi RawBT', browser: 'Dialog cetak browser' }[PRN.mode()]; }
+function prnModeLabel() { return { abt: 'Bluetooth (printer terpasang di HP)', bt: 'Bluetooth langsung', rawbt: 'Aplikasi RawBT', browser: 'Dialog cetak browser' }[PRN.mode()]; }
 
 /* ----- jendela pengaturan printer (bisa dibuka kasir maupun admin) ----- */
 function openPrinterSetup() {
   const m = openModal({
     title: 'Printer struk', size: 'wide',
     body: '<div class="field"><span class="field-label">Cara mencetak struk di perangkat ini</span><div class="rc-paper-options">' +
-      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="bt"> <span><b>Printer Bluetooth langsung</b><small>Chrome Android / Windows. Untuk printer thermal Bluetooth (BLE), tanpa aplikasi tambahan.</small></span></label>' +
+      (ABT.ok ? '<label class="rc-paper-option"><input type="radio" name="prnMode" value="abt"> <span><b>Printer Bluetooth (langsung dari aplikasi)</b><small>Pilih printer thermal yang sudah di-pairing di Setelan Bluetooth HP. Tanpa aplikasi tambahan.</small></span></label>' : '<label class="rc-paper-option"><input type="radio" name="prnMode" value="bt"> <span><b>Printer Bluetooth langsung</b><small>Chrome Android / Windows. Untuk printer thermal Bluetooth (BLE), tanpa aplikasi tambahan.</small></span></label>') +
       '<label class="rc-paper-option"><input type="radio" name="prnMode" value="rawbt"> <span><b>Lewat aplikasi RawBT (Android)</b><small>Untuk printer yang hanya Bluetooth Classic dan tidak muncul di mode di atas.</small></span></label>' +
-      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="browser"> <span><b>Dialog cetak browser</b><small>Printer USB/Wi-Fi yang terpasang di komputer. Printer Bluetooth tidak muncul di sini.</small></span></label>' +
+      '<label class="rc-paper-option"><input type="radio" name="prnMode" value="browser"> <span><b>' + (ABT.ok ? 'Dialog cetak Android (PDF / printer Wi-Fi)' : 'Dialog cetak browser') + '</b><small>Printer USB/Wi-Fi atau simpan PDF. Printer thermal Bluetooth tidak muncul di sini.</small></span></label>' +
       '</div></div><div id="prnDetail"></div>' +
       '<div class="grid2" style="margin-top:12px"><label class="field"><span>Ukuran kertas</span><select id="prnPaper"><option value="58">58 mm</option><option value="80">80 mm</option></select></label>' +
       '<label class="field"><span>Karakter per baris</span><select id="prnCols"><option value="0">Otomatis (58mm = 32, 80mm = 48)</option><option value="32">32</option><option value="42">42</option><option value="48">48</option></select><small>Ubah bila baris struk terpotong / terlalu sempit.</small></label></div>' +
@@ -2666,7 +2717,21 @@ function openPrinterSetup() {
     '<li>iPhone/iPad belum bisa memakai Web Bluetooth.</li></ul></details>';
   const draw = () => {
     const mode = q('input[name="prnMode"]:checked').value, box = q('#prnDetail');
-    if (mode === 'bt') {
+    if (mode === 'abt') {
+      const r = ABT.devices(), cur = ABT.addr();
+      let h = '';
+      if (!r.ok) { h = '<p class="page-note" style="margin:0">⚠ ' + esc(ABT.errText(r)) + '</p>'; }
+      else if (!r.list.length) { h = '<p class="page-note" style="margin:0">Belum ada perangkat Bluetooth yang di-pairing. Tekan <b>Buka setelan Bluetooth</b>, pairing printer (PIN biasanya 0000 atau 1234), lalu kembali ke sini.</p>'; }
+      else {
+        h = '<div class="field"><span class="field-label">Pilih printer' + (cur ? ' — terpilih: <b>' + esc(ABT.name()) + '</b>' : '') + '</span><div class="rc-paper-options">' +
+          r.list.map(d => '<label class="rc-paper-option"><input type="radio" name="abtDev" value="' + esc(d.addr) + '" data-n="' + esc(d.name) + '"' + (d.addr === cur ? ' checked' : '') + '> <span><b>' + esc(d.name) + '</b><small>' + esc(d.addr) + '</small></span></label>').join('') + '</div></div>';
+      }
+      box.innerHTML = h + '<div class="actions" style="margin-top:10px"><button type="button" class="btn" id="abtReload">Muat ulang daftar</button><button type="button" class="btn" id="abtSet">Buka setelan Bluetooth</button></div>' +
+        '<ul class="muted" style="margin:10px 0 0;padding-left:20px;line-height:1.55"><li>Printer harus menyala dan sudah di-pairing di Setelan Bluetooth Android.</li><li>Tutup aplikasi lain yang memakai printer itu (RawBT, dll) agar tidak bentrok.</li><li>Pilih printer, lalu tekan <b>Tes cetak</b>.</li></ul>';
+      $$('input[name="abtDev"]', box).forEach(x => x.addEventListener('change', () => { ABT.save(x.value, x.dataset.n); draw(); }));
+      q('#abtReload').onclick = () => draw();
+      q('#abtSet').onclick = () => { try { ANDROID.btSettings(); } catch (e) { toast('Buka Setelan → Bluetooth secara manual.', 'err'); } };
+    } else if (mode === 'bt') {
       if (!BT.supported()) { box.innerHTML = '<p class="page-note" style="margin:0">⚠ ' + esc(btUnsupportedMsg()) + '</p>' + tips; return; }
       const nm = BT.name();
       box.innerHTML = '<p class="page-note" style="margin:0">' + (BT.connected() ? '✓ Tersambung ke <b>' + esc(nm) + '</b>' : nm ? 'Printer terakhir: <b>' + esc(nm) + '</b> (disambungkan otomatis saat mencetak)' : 'Belum ada printer dipilih.') + '</p>' +
@@ -2929,7 +2994,7 @@ function renderBanner() {
   const b = $('#banner'); if (!b) { return; }
   const bk = IS_LOCAL && S.user && S.user.role === 'admin' && store.get('ksr_bkdirty') === '1' && (Date.now() - Number(store.get('ksr_lastbackup') || 0) > 3 * 864e5);
   b.innerHTML = (bk ? '<div class="pwd-banner" role="status"><span><b>Data hanya ada di HP ini.</b> ' + (store.get('ksr_lastbackup') ? 'Backup terakhir ' + new Date(Number(store.get('ksr_lastbackup'))).toLocaleDateString('id-ID') + '.' : 'Belum pernah backup.') + '</span><button type="button" class="btn btn-sm" data-act="backupNow">Backup sekarang</button></div>' : '') +
-    (S.upd ? '<div class="pwd-banner" role="status"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">Perbarui sekarang</button></div>' : '') +
+    (S.upd ? '<div class="pwd-banner" role="status"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">' + (S.upd.apk ? 'Download APK' : 'Perbarui sekarang') + '</button></div>' : '') +
     (!NET.online ? '<div class="off-banner" role="status"><span><b>Mode offline.</b> Transaksi disimpan di perangkat ini dan dikirim otomatis saat server tersambung.</span><button type="button" class="btn btn-sm" data-act="netInfo">Lihat antrean</button></div>' : '') +
     (S.defaultPw && S.user && S.user.role === 'admin' ? '<div class="pwd-banner"><span>Password akun <b>admin</b> masih bawaan (admin123).</span><button type="button" class="btn btn-sm" data-act="pwd">Ganti sekarang</button></div>' : '');
 }
@@ -3736,7 +3801,7 @@ function viewPengaturan() {
   const s = ST();
   const f = (id, label, val, ph, extra) => '<label class="field"><span>' + label + '</span><input id="' + id + '" type="text" value="' + esc(val) + '" placeholder="' + esc(ph || '') + '" ' + (extra || '') + '></label>';
   $('#view').innerHTML = '<div class="page">' + pageHead('Pengaturan', 'Identitas usaha, warna tema, invoice, dan struk.', '<button type="button" class="btn btn-primary" data-act="setSave">Simpan pengaturan</button>') +
-    '<div class="stack">' + (IS_LOCAL ? backupCardHtml() : '') + themeCardHtml() + (IS_DEMO ? syncCardHtml() : '') + (canUpd() ? updCardHtml() : '') +
+    '<div class="stack">' + (BKSRC ? backupCardHtml() : '') + themeCardHtml() + (IS_DEMO ? syncCardHtml() : '') + (canUpd() ? updCardHtml() : '') +
     '<div class="card"><div class="card-head"><h2>Identitas usaha & logo</h2></div><div class="card-body">' +
       '<div class="field"><span class="field-label">Logo (tampil di invoice, struk, dan menu)</span><div class="logo-box" id="logoBox"></div></div>' +
       f('sName', 'Nama usaha *', s.store_name, '', 'maxlength="100"') +
@@ -3845,7 +3910,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.0';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.3';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
@@ -3857,20 +3922,30 @@ function updSafe() {
   return !S.cart.length && !modals.length && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 function updCardHtml() {
-  return '<div class="card" id="updCard"><div class="card-head"><h2>Pembaruan aplikasi</h2><span class="muted" style="font-size:13px">Versi terpasang: <b>' + esc(APP_BUILD) + '</b></span></div><div class="card-body" id="updBody"></div></div>';
+  return '<div class="card" id="updCard"><div class="card-head"><h2>Pembaruan aplikasi</h2><span class="muted" style="font-size:13px">Versi terpasang: <b>' + esc(ANDROID ? APP_UI_VERSION : APP_BUILD) + '</b></span></div><div class="card-body" id="updBody"></div></div>';
 }
 function drawUpd() {
   const el = $('#updBody'); if (!el) { return; }
   const last = UPD.last ? new Date(UPD.last).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : 'belum pernah';
   el.innerHTML = (S.upd
-      ? '<div class="pwd-banner" style="margin:0 0 12px"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">Perbarui sekarang</button></div>'
+      ? '<div class="pwd-banner" style="margin:0 0 12px"><span><b>Versi ' + esc(S.upd.version) + ' tersedia.</b> ' + esc(S.upd.notes || '') + '</span><button type="button" class="btn btn-sm" data-act="updNow">' + (S.upd.apk ? 'Download APK' : 'Perbarui sekarang') + '</button></div>'
       : '<p class="muted" style="margin:0 0 10px">' + (UPD.err ? '<span style="color:var(--danger)">' + esc(UPD.err) + '</span>' : 'Aplikasi sudah versi terbaru.') + '</p>') +
     '<div class="muted" style="font-size:14px;margin-bottom:12px">Terakhir diperiksa: <b>' + esc(last) + '</b></div>' +
-    '<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="updAuto"' + (autoUpd() ? ' checked' : '') + '> <span>Perbarui otomatis saat ada versi baru (menunggu keranjang kosong)</span></label>' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="updAuto"' + (autoUpd() ? ' checked' : '') + '> <span>' + (ANDROID ? 'Beri tahu otomatis saat ada APK baru' : 'Perbarui otomatis saat ada versi baru (menunggu keranjang kosong)') + '</span></label>' +
     '<div class="actions"><button type="button" class="btn btn-primary" data-act="updCheck"' + (UPD.checking ? ' disabled' : '') + '>' + (UPD.checking ? 'Memeriksa…' : 'Periksa update') + '</button></div>' +
     '<p class="page-note" style="margin:12px 0 0">Data transaksi tidak hilang saat pembaruan. Aplikasi tetap bisa dipakai offline; pembaruan diambil saat ada internet.</p>';
   const cb = $('#updAuto'); if (cb) { cb.onchange = () => { store.set('ksr_autoupd', cb.checked ? '1' : '0'); toast(cb.checked ? 'Pembaruan otomatis aktif.' : 'Pembaruan otomatis dimatikan.', 'ok'); }; }
 }
+/* APK: berkas web ikut terbungkus di dalam APK, jadi update = pasang APK baru dari GitHub Releases */
+function verCmp(a, b) { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) { return d > 0 ? 1 : -1; } } return 0; }
+async function latestApk() {
+  const r = await fetch('https://api.github.com/repos/reksa-yp/demo-kasirku/releases?per_page=30', { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+  if (!r.ok) { throw new Error('GitHub menjawab HTTP ' + r.status); }
+  let ver = '';
+  (await r.json() || []).forEach(rel => (rel.assets || []).forEach(a => { const m = /^(pinapos|kasirku)[^/]*?(\d+\.\d+\.\d+)\.apk$/i.exec(a.name); if (m && (!ver || verCmp(m[2], ver) > 0)) { ver = m[2]; } }));
+  return ver;
+}
+function openDownloadPage() { const a = document.createElement('a'); a.href = DL_PAGE; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); }
 async function checkUpdate(manual) {
   if (!canUpd()) { if (manual) { toast('Pembaruan hanya tersedia saat aplikasi dibuka lewat alamat web.', 'err'); } return false; }
   if (UPD.checking) { return false; }
@@ -3878,6 +3953,11 @@ async function checkUpdate(manual) {
   UPD.checking = true; UPD.err = ''; drawUpd();
   let found = null;
   try {
+    if (ANDROID) {
+      const v = await latestApk();
+      UPD.last = Date.now(); store.set('ksr_updlast', String(UPD.last));
+      if (v && verCmp(v, APP_UI_VERSION) > 0) { found = { version: v, apk: true, notes: 'Download APK terbaru lalu pasang. Data aman bila sudah sinkron Supabase atau sudah di-backup.' }; S.upd = found; } else { S.upd = null; }
+    } else {
     const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) { throw new Error('Server menjawab HTTP ' + r.status); }
     const j = await r.json(), v = String((j && j.version) || '');
@@ -3885,17 +3965,19 @@ async function checkUpdate(manual) {
     UPD.last = Date.now(); store.set('ksr_updlast', String(UPD.last));
     try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) { reg.update().catch(() => {}); } } catch (e) {}
     if (v !== APP_BUILD) { found = { version: v, notes: String(j.notes || '') }; S.upd = found; } else { S.upd = null; }
+    }
   } catch (e) { UPD.err = 'Gagal memeriksa update: ' + ((e && e.message) || 'cek internet'); }
   UPD.checking = false; renderBanner(); drawUpd();
   if (manual) {
     if (UPD.err) { toast(UPD.err, 'err'); }
-    else if (!found) { toast('Sudah versi terbaru (' + APP_BUILD + ').', 'ok'); }
-    else if (await confirmBox({ title: 'Versi ' + found.version + ' tersedia', message: esc(found.notes || 'Perbaikan dan peningkatan.') + '<br><br>Perbarui sekarang? Aplikasi akan dimuat ulang' + (S.user && S.cart.length ? ', <b>keranjang yang sedang dibuka akan dikosongkan</b>' : '') + '.', ok: 'Perbarui sekarang' })) { applyUpdate(); }
-  } else if (found && autoUpd() && updSafe() && !updTried(found.version)) { applyUpdate(); }
+    else if (!found) { toast('Sudah versi terbaru (' + (ANDROID ? APP_UI_VERSION : APP_BUILD) + ').', 'ok'); }
+    else if (await confirmBox({ title: 'Versi ' + found.version + ' tersedia', message: esc(found.notes || 'Perbaikan dan peningkatan.') + '<br><br>' + (found.apk ? 'Buka halaman download sekarang?' : 'Perbarui sekarang? Aplikasi akan dimuat ulang' + (S.user && S.cart.length ? ', <b>keranjang yang sedang dibuka akan dikosongkan</b>' : '') + '.'), ok: found.apk ? 'Download APK' : 'Perbarui sekarang' })) { applyUpdate(); }
+  } else if (found && !found.apk && autoUpd() && updSafe() && !updTried(found.version)) { applyUpdate(); }
   return !!found;
 }
 async function applyUpdate() {
   const v = S.upd && S.upd.version; if (!v) { return; }
+  if (S.upd.apk) { openDownloadPage(); return; }
   try { sessionStorage.setItem('ksr_updtry', v); } catch (e) {}
   toast('Memperbarui ke versi ' + v + '…', 'ok');
   try { const api = window.KASIRKU_DEMO && window.KASIRKU_DEMO.sync; if (api && api.status().connected) { await Promise.race([api.run(), new Promise(r => setTimeout(r, 4000))]); } } catch (e) {}
@@ -3908,7 +3990,7 @@ ACT.updNow = () => { applyUpdate(); };
 if (canUpd()) {
   setTimeout(() => checkUpdate(false), 4000);
   setInterval(() => checkUpdate(false), 30 * 60 * 1000);
-  setInterval(() => { if (S.upd && autoUpd() && updSafe() && !updTried(S.upd.version)) { applyUpdate(); } }, 60 * 1000);
+  setInterval(() => { if (S.upd && !S.upd.apk && autoUpd() && updSafe() && !updTried(S.upd.version)) { applyUpdate(); } }, 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - UPD.last > 5 * 60 * 1000) { checkUpdate(false); } });
   window.addEventListener('online', () => { if (Date.now() - UPD.last > 60 * 1000) { checkUpdate(false); } });
 }
@@ -4038,7 +4120,7 @@ Object.assign(ACT, {
 
 /* ---------- backup & pulihkan (aplikasi Android tanpa server) ---------- */
 function backupCardHtml() {
-  const last = Number(store.get('ksr_lastbackup') || 0), st = window.KASIRKU_LOCAL.stats();
+  const last = Number(store.get('ksr_lastbackup') || 0), st = BKSRC.stats();
   return '<div class="card" id="bkCard"><div class="card-head"><h2>Backup & pulihkan data</h2><span class="badge ' + (last ? 'ok' : 'warn') + '">' + (last ? 'Terakhir ' + new Date(last).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : 'Belum pernah backup') + '</span></div><div class="card-body">' +
     '<p class="muted" style="margin:0 0 12px">Semua data (' + int(st.transactions) + ' transaksi, ' + int(st.products) + ' produk, ' + int(st.customers) + ' pelanggan) hanya tersimpan di HP ini. Simpan file backup ke Google Drive, WhatsApp, atau komputer secara rutin — jika aplikasi dihapus atau HP rusak, data bisa dipulihkan dari file tersebut.</p>' +
     '<div class="actions"><button type="button" class="btn btn-primary" data-act="backupNow">Backup data</button>' +
@@ -4051,12 +4133,13 @@ window.ksrSaved = (ok, msg) => {
   else if (msg) { toast(msg, msg === 'Dibatalkan' ? '' : 'err'); }
 };
 window.ksrStorageError = e => toast('Data gagal disimpan ke HP: ' + (e && e.message || e) + '. Periksa sisa memori HP.', 'err');
-window.ksrFlush = () => { if (IS_LOCAL) { window.KASIRKU_LOCAL.flush(); } };
+window.ksrBtPerm = ok => { if (!ok) { toast('Izin "Perangkat sekitar" ditolak — printer Bluetooth tidak bisa dipakai.', 'err'); } };
+window.ksrFlush = () => { if (BKSRC) { BKSRC.flush(); } };
 Object.assign(ACT, {
   backupNow(t) {
     run(t, async () => {
-      await window.KASIRKU_LOCAL.flush();
-      const data = JSON.stringify(window.KASIRKU_LOCAL.exportData()), name = backupName();
+      await BKSRC.flush();
+      const data = JSON.stringify(BKSRC.exportData()), name = backupName();
       if (ANDROID && ANDROID.saveFile) { ANDROID.saveFile(name, 'application/json', data); return; }   // hasil lewat window.ksrSaved
       const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' })); a.download = name;
       document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
@@ -4075,7 +4158,7 @@ Object.assign(CHG, {
       const ok = await confirmBox({ title: 'Pulihkan data?', message: 'Seluruh data di HP ini akan <b>diganti</b> dengan isi backup' + (b.exported_at ? ' tanggal ' + esc(new Date(b.exported_at).toLocaleString('id-ID')) : '') + ' (' + int(n) + ' transaksi). Tindakan ini tidak dapat dibatalkan.', ok: 'Pulihkan', danger: true });
       if (!ok) { return; }
       try {
-        await window.KASIRKU_LOCAL.restoreData(b);
+        await BKSRC.restoreData(b);
         store.del('ksr_tok'); store.del('ksr_bkdirty'); store.set('ksr_lastbackup', String(Date.now()));
         showLogin('Data berhasil dipulihkan. Silakan masuk dengan akun dari backup tersebut.');
       } catch (e) { toast(e.message, 'err'); }
