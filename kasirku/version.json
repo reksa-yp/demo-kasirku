@@ -1,4 +1,4 @@
 {
-  "version": "1.4.0",
-  "notes": "Sinkron Supabase opsional + pembaruan otomatis."
+  "version": "1.4.1",
+  "notes": "Backup & pulihkan data dari file."
 }
