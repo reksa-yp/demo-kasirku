@@ -1,4 +1,4 @@
 {
-  "version": "1.4.7",
-  "notes": "Fitur Pesanan di kasir; warna tema tersimpan permanen."
+  "version": "1.4.8",
+  "notes": "Pesanan: uang muka (DP) dan cetak slip."
 }
