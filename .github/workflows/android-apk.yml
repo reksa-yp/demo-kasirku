@@ -72,12 +72,12 @@ jobs:
           PINAPOS_KEY_PASSWORD: ${{ secrets.PINAPOS_KEY_PASSWORD }}
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          gradle --no-daemon assemblePinaposDebug assembleCuciajaDebug
+          gradle --no-daemon assemblePinaposRelease assembleCuciajaRelease
 
       - name: Beri nama file
         run: |
-          cp android/app/build/outputs/apk/pinapos/debug/app-pinapos-debug.apk "PinaPos-$VER.apk"
-          cp android/app/build/outputs/apk/cuciaja/debug/app-cuciaja-debug.apk "CuciAja-$VER.apk"
+          cp android/app/build/outputs/apk/pinapos/release/app-pinapos-release.apk "PinaPos-$VER.apk"
+          cp android/app/build/outputs/apk/cuciaja/release/app-cuciaja-release.apk "CuciAja-$VER.apk"
 
       - uses: actions/upload-artifact@v4
         with:
