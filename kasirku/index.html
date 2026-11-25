@@ -252,6 +252,7 @@ table.t{ width:100%; border-collapse:collapse; font-size:14px; }
 .disc-ctl{ display:flex; gap:6px; margin-left:auto; } .disc-ctl select{ width:64px; min-height:34px; padding:0 6px; } .disc-ctl input{ width:96px; min-height:34px; text-align:right; }
 .lcd{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin:8px 0; padding:10px 14px; color:var(--lcd-ink); background:var(--lcd); border-radius:10px; }
 .lcd span{ font-size:13px; opacity:.75; } .lcd strong{ font-size:30px; font-weight:700; letter-spacing:.3px; overflow-wrap:anywhere; text-align:right; }
+.order-btn{ width:100%; margin-top:8px; min-height:44px; font-weight:700; } .order-banner{ margin:0 0 8px; padding:8px 10px; font-size:13px; border-radius:10px; background:var(--brand-soft); color:var(--brand); border:1px solid var(--brand); } .linkbtn{ background:none; border:0; color:inherit; text-decoration:underline; cursor:pointer; padding:0 0 0 6px; font:inherit; }
 .pay-btn{ width:100%; min-height:54px; font-size:18px; font-weight:800; letter-spacing:.5px; color:#fff; background:var(--pay); border:0; border-radius:10px; } .pay-btn:hover:not(:disabled){ background:var(--pay-hover); } .pay-btn:disabled{ opacity:.45; cursor:not-allowed; }
 .catalog-head{ display:flex; flex-direction:column; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); }
 .scan{ position:relative; } .scan svg{ position:absolute; left:13px; top:13px; width:22px; height:22px; opacity:.5; pointer-events:none; }
@@ -734,6 +735,7 @@ var SCHEMA = {
   Customers: [['id','n'],['name','s'],['phone','s'],['email','s'],['address','s'],['created_at','s']],
   Transactions: [['id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_addr','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['discount_amount','n'],['tax_rate','n'],['tax_amount','n'],['grand_total','n'],['method','s'],['amount_paid','n'],['change','n'],['status','s'],['note','s'],['client_ref','s'],['source','s']],
   TxItems: [['id','n'],['tx_id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['product_id','n'],['name','s'],['type','s'],['qty','n'],['price','n'],['cost','n'],['subtotal','n']],
+  Orders: [['id','n'],['order_no','s'],['date','s'],['due_date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_phone','s'],['customer_email','s'],['customer_addr','s'],['note','s'],['items','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['status','s'],['tx_id','n'],['invoice_no','s'],['client_ref','s']],
   StockLog: [['id','n'],['date','s'],['product_id','n'],['name','s'],['user_name','s'],['type','s'],['change','n'],['before','n'],['after','n'],['note','s']],
   Settings: [['key','s'],['value','s']],
 };
@@ -986,6 +988,13 @@ function createBackend_(P) {
     var method = String(p.payment_method || '');
     if (METHODS.indexOf(method) < 0) { fail('Metode pembayaran tidak valid.'); }
     var note = str(p.note, 200, 'Catatan', false);
+    var linkOrder = null;
+    if (p.order_id) {
+      var oid = refId(p.order_id, 'Pesanan');
+      linkOrder = db.all('Orders').filter(function (x) { return x.id === oid; })[0];
+      if (!linkOrder) { fail('Pesanan tidak ditemukan.'); }
+      if (linkOrder.status !== 'baru') { fail('Pesanan ' + linkOrder.order_no + ' sudah ' + (linkOrder.status === 'selesai' ? 'selesai dibayar' : 'dibatalkan') + '.'); }
+    }
 
     var settings = loadSettings();
     var products = db.all('Products');
@@ -1038,6 +1047,7 @@ function createBackend_(P) {
       if (l.pr.track_stock) { var cur = db.all('Products').filter(function (x) { return x.id === l.pr.id; })[0]; db.update('Products', l.pr.id, { stock: cur.stock - l.qty }); }
     });
     db.kvWrite({ inv_year: yy, inv_next: String(seq + 1) }, []);
+    if (linkOrder) { db.update('Orders', linkOrder.id, { status: 'selesai', tx_id: tx.id, invoice_no: no }); }
     return txPayload(tx, saved);
   } };
 
@@ -1155,6 +1165,104 @@ function createBackend_(P) {
   } };
   A.customerDelete = { roles: ['admin'], write: true, run: function (p) {
     return { deleted: db.removeMany('Customers', idList(p.ids)) };
+  } };
+
+  /* ----- pesanan (pre-order): data pelanggan di pesanan otomatis masuk ke daftar Pelanggan ----- */
+  function pubOrder(o) {
+    var items = []; try { items = JSON.parse(o.items || '[]'); } catch (e) {}
+    return {
+      id: o.id, order_no: o.order_no, date: o.date, due_date: o.due_date, user_name: o.user_name, customer_id: o.customer_id,
+      customer_name: o.customer_name, customer_phone: o.customer_phone, customer_email: o.customer_email, customer_addr: o.customer_addr,
+      note: o.note, items: items, subtotal: o.subtotal, discount_type: o.discount_type, discount_value: o.discount_value,
+      status: o.status, tx_id: o.tx_id, invoice_no: o.invoice_no
+    };
+  }
+  function digits_(v) { return String(v || '').replace(/\D/g, ''); }
+  function upsertCustomer(c) {
+    var all = db.all('Customers'), hit = null, dg = digits_(c.phone);
+    if (c.id) { hit = all.filter(function (x) { return x.id === c.id; })[0] || null; }
+    if (!hit && dg) { hit = all.filter(function (x) { return digits_(x.phone) === dg; })[0] || null; }
+    if (!hit) {
+      var nm = c.name.toLowerCase();
+      hit = all.filter(function (x) { return x.name.toLowerCase() === nm && (!dg || !x.phone || digits_(x.phone) === dg); })[0] || null;
+    }
+    if (!hit) {
+      return db.insert('Customers', { name: c.name, phone: c.phone, email: c.email, address: c.address, created_at: fmtDateTime_(P.now()) });
+    }
+    var patch = {};   // hanya melengkapi kolom yang masih kosong; data yang sudah ada tidak ditimpa
+    if (!hit.phone && c.phone) { patch.phone = c.phone; }
+    if (!hit.email && c.email) { patch.email = c.email; }
+    if (!hit.address && c.address) { patch.address = c.address; }
+    return Object.keys(patch).length ? db.update('Customers', hit.id, patch) : hit;
+  }
+  A.orderList = { roles: ['admin', 'kasir'], run: function () {
+    var rows = db.all('Orders'); rows.sort(function (a, b) { return b.id - a.id; });
+    return { orders: rows.slice(0, 500).map(pubOrder) };
+  } };
+  A.orderSave = { roles: ['admin', 'kasir'], write: true, run: function (p, user) {
+    var ref = str(p.ref, 64, 'Ref pesanan', false);
+    if (ref) {
+      if (!/^[A-Za-z0-9_-]{8,64}$/.test(ref)) { fail('Ref pesanan tidak valid.'); }
+      var dup = db.all('Orders').filter(function (x) { return x.client_ref === ref; })[0];
+      if (dup) { return { order: pubOrder(dup), customer: null, duplicate: true }; }
+    }
+    var cust = {
+      id: p.customer_id ? refId(p.customer_id, 'Pelanggan') : 0, name: str(p.customer_name, 100, 'Nama pelanggan', true),
+      phone: str(p.customer_phone, 30, 'Telepon', false), email: str(p.customer_email, 100, 'Email', false), address: str(p.customer_addr, 250, 'Alamat', false)
+    };
+    if (cust.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cust.email)) { fail('Format email tidak valid.'); }
+    var due = String(p.due_date || '').trim();
+    if (due && !isYmd_(due)) { fail('Tanggal ambil/kirim tidak valid.'); }
+    var note = str(p.note, 200, 'Catatan', false);
+    var raw = p.items;
+    if (!Array.isArray(raw) || !raw.length) { fail('Keranjang masih kosong.'); }
+    if (raw.length > 200) { fail('Terlalu banyak item dalam satu pesanan (maksimal 200).'); }
+    var byId = {}, ord = [], products = {};
+    db.all('Products').forEach(function (x) { products[x.id] = x; });
+    raw.forEach(function (it) {
+      var pid = refId(it && it.product_id, 'Produk'), q = int(it && it.qty, 'Jumlah', 1, 999999), pr = products[pid];
+      if (!pr) { fail('Ada produk yang sudah dihapus. Muat ulang halaman kasir.'); }
+      if (!byId[pid]) { byId[pid] = { product_id: pid, name: pr.name, unit: pr.unit, price: pr.price, qty: 0 }; ord.push(pid); }
+      byId[pid].qty += q;
+    });
+    var lines = ord.map(function (pid) { return byId[pid]; }), subtotal = 0;
+    lines.forEach(function (l) { subtotal += round2_(l.price * l.qty); });
+    subtotal = round2_(subtotal);
+    var discType = p.discount_type || 'none';
+    if (['none', 'percent', 'amount'].indexOf(discType) < 0) { fail('Jenis diskon tidak valid.'); }
+    var discValue = discType === 'none' ? 0 : num(p.discount_value || 0, 'Diskon', 0, 1e12);
+    if (discType === 'percent' && discValue > 100) { fail('Diskon persen tidak boleh lebih dari 100.'); }
+    if (discValue === 0) { discType = 'none'; }
+    var existing = null;
+    if (p.id) {
+      var oid = refId(p.id, 'Pesanan');
+      existing = db.all('Orders').filter(function (x) { return x.id === oid; })[0];
+      if (!existing) { fail('Pesanan tidak ditemukan.'); }
+      if (existing.status !== 'baru') { fail('Pesanan yang sudah selesai/dibatalkan tidak bisa diubah.'); }
+    }
+    var customer = upsertCustomer(cust);
+    var fields = {
+      due_date: due, customer_id: customer.id, customer_name: customer.name, customer_phone: customer.phone || cust.phone, customer_email: customer.email || cust.email,
+      customer_addr: customer.address || cust.address, note: note, items: JSON.stringify(lines), subtotal: subtotal, discount_type: discType, discount_value: discValue
+    };
+    var row;
+    if (existing) { row = db.update('Orders', existing.id, fields); }
+    else {
+      var now = P.now(), day = fmtDate_(now).slice(2).replace(/-/g, ''), tag = (P.invTag && P.invTag()) || '', n = 1, no;
+      var nos = {}; db.all('Orders').forEach(function (x) { nos[x.order_no] = 1; });
+      do { no = 'PO-' + day + '-' + tag + pad_(n++, 3); } while (nos[no]);
+      fields.order_no = no; fields.date = fmtDateTime_(now); fields.user_id = user.id; fields.user_name = user.full_name;
+      fields.status = 'baru'; fields.tx_id = 0; fields.invoice_no = ''; fields.client_ref = ref;
+      row = db.insert('Orders', fields);
+    }
+    return { order: pubOrder(row), customer: pubCustomer(customer) };
+  } };
+  A.orderCancel = { roles: ['admin', 'kasir'], write: true, run: function (p) {
+    var id = refId(p.id, 'Pesanan');
+    var o = db.all('Orders').filter(function (x) { return x.id === id; })[0];
+    if (!o) { fail('Pesanan tidak ditemukan.'); }
+    if (o.status !== 'baru') { fail('Hanya pesanan berstatus Baru yang bisa dibatalkan.'); }
+    return { order: pubOrder(db.update('Orders', id, { status: 'batal' })) };
   } };
 
   /* ----- pengguna (admin) ----- */
@@ -1768,6 +1876,7 @@ function createDemoBackend(storage, logoDataUrl) {
     if (!fresh) { try { var raw = storage.get(); if (raw) { var s = JSON.parse(raw); if (s && s.v === 1) { state = s; } } } catch (e) {} }
     var seeded = false;
     if (!state) { state = emptyState(); seeded = true; }
+    Object.keys(SCHEMA).forEach(function (k) { if (k !== 'Settings' && !Array.isArray(state.tables[k])) { state.tables[k] = []; } });   // data lama belum punya tabel baru (mis. Orders)
     platform.db = memoryDb_(state, save, sync.hook);
     backend = createBackend_(platform);
     if (seeded) { seedDemo_(backend, platform, logoDataUrl); }
@@ -2061,7 +2170,7 @@ const store = {
 /* ---------- state ---------- */
 const S = {
   token: null, user: null, settings: {}, products: [], categories: [], customers: [], defaultPw: false,
-  view: 'kasir', cart: [], customerId: 0, discType: 'percent', discValue: 0, cat: 'all', q: '', pane: 'catalog',
+  view: 'kasir', cart: [], customerId: 0, orderId: 0, ord: { list: [], q: '', f: 'baru' }, discType: 'percent', discValue: 0, cat: 'all', q: '', pane: 'catalog',
   paper: Number(store.get('ksr_paper')) === 58 ? 58 : 80,
   sel: { products: new Set(), customers: new Set(), users: new Set() }
 };
@@ -2891,6 +3000,7 @@ const IC = {
   riwayat: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   dashboard: '<path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/>',
   produk: '<path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  pesanan: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM9 12h6M9 16h4"/>',
   pelanggan: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3c2.2.7 3.5 2.6 3.5 5.7"/>',
   pengguna: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
   pengaturan: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'
@@ -2899,6 +3009,7 @@ const icon = (n, size) => '<svg class="ic" width="' + (size || 22) + '" height="
 const NAV = [
   { id: 'kasir', label: 'Kasir', g: 'Transaksi', roles: ['admin', 'kasir'] },
   { id: 'riwayat', label: 'Riwayat', g: 'Transaksi', roles: ['admin', 'kasir'] },
+  { id: 'pesanan', label: 'Pesanan', g: 'Transaksi', roles: ['admin', 'kasir'], local: true },
   { id: 'dashboard', label: 'Dashboard', g: 'Laporan', roles: ['admin'] },
   { id: 'produk', label: 'Produk', g: 'Kelola', roles: ['admin'] },
   { id: 'pelanggan', label: 'Pelanggan', g: 'Kelola', roles: ['admin'] },
@@ -3002,14 +3113,14 @@ function renderBanner() {
     (S.defaultPw && S.user && S.user.role === 'admin' ? '<div class="pwd-banner"><span>Password akun <b>admin</b> masih bawaan (admin123).</span><button type="button" class="btn btn-sm" data-act="pwd">Ganti sekarang</button></div>' : '');
 }
 function renderNav() {
-  const items = NAV.filter(n => n.roles.includes(S.user.role)); let g = '', h = '';
+  const items = NAV.filter(n => n.roles.includes(S.user.role) && (!n.local || BKSRC)); let g = '', h = '';
   items.forEach(n => {
     if (n.g !== g) { g = n.g; h += '<div class="grp">' + g + '</div>'; }
     h += '<button type="button" data-act="nav" data-v="' + n.id + '"' + (S.view === n.id ? ' aria-current="page"' : '') + '>' + icon(n.id) + '<span>' + n.label + '</span></button>';
   });
   $('#nav').innerHTML = h;
   // navigasi bawah (HP): maksimal 4 menu utama + tombol "Menu" untuk sisanya
-  const main = items.filter(n => ['kasir', 'riwayat', 'dashboard', 'produk'].includes(n.id)).slice(0, 4);
+  const main = items.filter(n => ['kasir', 'riwayat', 'pesanan', 'dashboard', 'produk'].includes(n.id)).slice(0, 4);
   const more = items.some(n => !main.includes(n)) || true;
   const bn = $('#bnav');
   if (bn) {
@@ -3034,7 +3145,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modals.le
 function go(v) {
   if (S.themeDraft) { S.themeDraft = null; applyColors(ST().theme); }
   const n = NAV.find(x => x.id === v);
-  if (!n || !n.roles.includes(S.user.role)) { v = 'kasir'; }
+  if (!n || !n.roles.includes(S.user.role) || (n.local && !BKSRC)) { v = 'kasir'; }
   S.view = v; renderNav(); document.body.classList.toggle('is-kasir', v === 'kasir'); if (v !== 'kasir') { document.body.classList.remove('cart-on'); } S.navOverlay = false; applyNav();
   const view = $('#view'); view.scrollTop = 0; window.scrollTo(0, 0);
   try { VIEWS[v](); } catch (e) { viewError(e, () => go(v)); }
@@ -3158,7 +3269,9 @@ function viewKasir() {
         '<div class="sum-row" id="rowDisc" hidden><span class="muted">Potongan diskon</span><span id="sDisc"></span></div>' +
         '<div class="sum-row" id="rowTax" hidden><span id="taxLbl" class="muted"></span><span id="sTax"></span></div>' +
         '<div class="lcd"><span>TOTAL</span><strong id="sTotal">Rp 0</strong></div>' +
+        '<div class="order-banner" id="ordBanner" hidden></div>' +
         '<button type="button" class="pay-btn" id="payBtn" data-act="pay" disabled>BAYAR <kbd>F9</kbd></button>' +
+        (BKSRC ? '<button type="button" class="btn order-btn" id="ordBtn" data-act="orderNew" disabled></button>' : '') +
       '</div>' +
     '</section>' +
     '<section class="catalog-panel" aria-label="Katalog produk">' +
@@ -3254,6 +3367,9 @@ function renderTotals() {
   $('#rowTax').hidden = !(ST().tax_rate > 0); $('#taxLbl').textContent = 'Pajak (' + (ST().tax_rate || 0) + '%)'; $('#sTax').textContent = rp(c.tax);
   $('#sTotal').textContent = rp(c.grand);
   $('#payBtn').disabled = !S.cart.length;
+  const ob = $('#ordBtn'); if (ob) { ob.disabled = !S.cart.length; ob.textContent = S.orderId ? 'Simpan perubahan pesanan' : 'Simpan sebagai pesanan'; }
+  const bn = $('#ordBanner');
+  if (bn) { const o = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null; bn.hidden = !S.orderId; bn.innerHTML = S.orderId ? '📋 Memproses pesanan <b>' + esc(o ? o.order_no : '') + '</b> <button type="button" class="linkbtn" data-act="orderDetach">Lepas</button>' : ''; }
   const pc = $('#paneCart'); if (pc) { pc.textContent = 'Keranjang' + (S.cart.length ? ' · ' + rp(c.grand) : ''); }
   const cb = $('#cartBar');
   if (cb) {
@@ -3336,7 +3452,7 @@ function openPay() {
     if (btn.disabled) { return; } btn.disabled = true; btn.textContent = 'Memproses…';
     const body = {
       ref: m.ref || (m.ref = newRef('tx')),
-      items: S.cart.map(l => ({ product_id: l.product_id, qty: l.qty })), customer_id: S.customerId || 0,
+      items: S.cart.map(l => ({ product_id: l.product_id, qty: l.qty })), customer_id: S.customerId || 0, order_id: S.orderId || 0,
       discount_type: S.discValue > 0 ? S.discType : 'none', discount_value: S.discValue, payment_method: method, amount_paid: amount, note: m.$('#note').value
     };
     try {
@@ -3345,7 +3461,7 @@ function openPay() {
       catch (e) { if (e.code !== 'OFFLINE') { throw e; } tx = offlineCheckout(body, c); }
       if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); }
       tx.items.forEach(i => { const p = S.products.find(x => x.id === i.product_id); if (p && p.track_stock) { p.stock = p.stock - i.qty; } });
-      S.cart = []; S.customerId = 0; S.discValue = 0; S.discType = 'percent'; $('#dVal').value = ''; $('#dType').value = 'percent';
+      S.cart = []; S.customerId = 0; S.orderId = 0; S.discValue = 0; S.discType = 'percent'; $('#dVal').value = ''; $('#dType').value = 'percent';
       S.pane = 'catalog'; const kz = $('#kasir'); if (kz) { kz.dataset.pane = 'catalog'; }
       m.close(); renderCatalog(); renderCart(); showDone(tx);
     } catch (e) {
@@ -3399,11 +3515,114 @@ Object.assign(ACT, {
   inc(t) { const i = Number(t.dataset.i); setQty(i, S.cart[i].qty + 1); },
   dec(t) { const i = Number(t.dataset.i); setQty(i, S.cart[i].qty - 1); },
   rm(t) { S.cart.splice(Number(t.dataset.i), 1); renderCart(); },
-  clearCart() { if (S.cart.length) { confirmBox({ title: 'Kosongkan keranjang?', message: 'Semua item di keranjang akan dihapus.', ok: 'Kosongkan', danger: true }).then(y => { if (y) { S.cart = []; renderCart(); } }); } },
+  clearCart() { if (S.cart.length) { confirmBox({ title: 'Kosongkan keranjang?', message: 'Semua item di keranjang akan dihapus.', ok: 'Kosongkan', danger: true }).then(y => { if (y) { S.cart = []; S.orderId = 0; renderCart(); } }); } },
   cat(t) { S.cat = t.dataset.cat; renderCatalog(); },
   pane(t) { S.pane = t.dataset.pane; $('#kasir').dataset.pane = S.pane; window.scrollTo(0, 0); },
-  pickCustomer: pickCustomer, pay: openPay
+  pickCustomer: pickCustomer, pay: openPay,
+  orderNew: orderForm,
+  orderDetach() { S.orderId = 0; renderCart(); }
 });
+
+/* =====================================================================
+   PESANAN (pre-order). Isian mengikuti formulir pelanggan; data pelanggan
+   otomatis masuk ke daftar Pelanggan. Stok baru berkurang saat dibayar.
+   ===================================================================== */
+const ORD_ST = { baru: ['Baru', 'warn'], selesai: ['Selesai', 'ok'], batal: ['Batal', 'danger'] };
+const orderTotal = o => { const sub = o.subtotal || 0, v = Number(o.discount_value) || 0; let d = o.discount_type === 'percent' ? Math.round(sub * Math.min(v, 100) / 100) : o.discount_type === 'amount' ? Math.round(v) : 0; d = Math.min(d, sub); return sub - d + Math.round((sub - d) * (ST().tax_rate || 0) / 100); };
+function orderForm() {
+  if (!S.cart.length || modals.length) { return; }
+  const editing = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null;
+  const cu = custOf();
+  const c = editing ? { name: editing.customer_name, phone: editing.customer_phone, email: editing.customer_email, address: editing.customer_addr, due: editing.due_date, note: editing.note }
+    : { name: cu ? cu.name : '', phone: cu ? cu.phone : '', email: cu ? cu.email : '', address: cu ? cu.address : '', due: '', note: '' };
+  const cc = calcCart();
+  const m = openModal({
+    title: editing ? 'Ubah pesanan ' + editing.order_no : 'Pesanan baru', focus: '#on', size: 'wide',
+    body: '<div class="pay-total"><span>' + int(S.cart.reduce((a, l) => a + l.qty, 0)) + ' item · total pesanan</span><strong>' + rp(cc.grand) + '</strong></div>' +
+      '<label class="field"><span>Nama pelanggan / perusahaan *</span><input id="on" type="text" maxlength="100" autocomplete="off" list="onList" value="' + esc(c.name) + '"><datalist id="onList">' + S.customers.slice(0, 300).map(x => '<option value="' + esc(x.name) + '">').join('') + '</datalist></label>' +
+      '<div class="grid2"><label class="field"><span>Telepon</span><input id="op" type="text" maxlength="30" inputmode="tel" value="' + esc(c.phone) + '"></label><label class="field"><span>Email</span><input id="oe" type="email" maxlength="100" value="' + esc(c.email) + '"></label></div>' +
+      '<label class="field"><span>Alamat</span><textarea id="oa" maxlength="250">' + esc(c.address) + '</textarea></label>' +
+      '<div class="grid2"><label class="field"><span>Tanggal diambil / dikirim</span><input id="od" type="date" value="' + esc(c.due) + '"></label><label class="field"><span>Catatan pesanan</span><input id="oc" type="text" maxlength="200" value="' + esc(c.note) + '"></label></div>' +
+      '<p class="muted" style="margin:0 0 4px;font-size:13px">Data pelanggan otomatis tersimpan ke menu Pelanggan. Stok baru berkurang saat pesanan dibayar.</p><div class="form-error" hidden></div>',
+    foot: '<button type="button" class="btn" data-close2>Batal</button><button type="button" class="btn btn-primary" id="osave">' + (editing ? 'Simpan perubahan' : 'Simpan pesanan') + '</button>'
+  });
+  m.$('[data-close2]').onclick = () => m.close();
+  m.$('#on').addEventListener('change', () => {   // nama cocok dengan pelanggan terdaftar -> isi otomatis kolom yang kosong
+    const hit = S.customers.find(x => x.name.toLowerCase() === m.$('#on').value.trim().toLowerCase()); if (!hit) { return; }
+    if (!m.$('#op').value) { m.$('#op').value = hit.phone || ''; } if (!m.$('#oe').value) { m.$('#oe').value = hit.email || ''; } if (!m.$('#oa').value) { m.$('#oa').value = hit.address || ''; }
+  });
+  m.$('#osave').onclick = () => submitModal(m, m.$('#osave'), async () => {
+    const name = m.$('#on').value.trim(), known = S.customers.find(x => x.name.toLowerCase() === name.toLowerCase());
+    const r = await api('orderSave', {
+      ref: m.ref || (m.ref = newRef('po')), id: S.orderId || 0, customer_id: (editing && editing.customer_id) || (known ? known.id : 0) || (cu && cu.name.toLowerCase() === name.toLowerCase() ? cu.id : 0),
+      customer_name: name, customer_phone: m.$('#op').value, customer_email: m.$('#oe').value, customer_addr: m.$('#oa').value, due_date: m.$('#od').value, note: m.$('#oc').value,
+      items: S.cart.map(l => ({ product_id: l.product_id, qty: l.qty })), discount_type: S.discValue > 0 ? S.discType : 'none', discount_value: S.discValue
+    });
+    if (r.customer) { const i = S.customers.findIndex(x => x.id === r.customer.id); if (i >= 0) { S.customers[i] = r.customer; } else { S.customers.push(r.customer); } }
+    S.cart = []; S.customerId = 0; S.orderId = 0; S.discValue = 0; S.discType = 'percent'; const dv = $('#dVal'); if (dv) { dv.value = ''; $('#dType').value = 'percent'; }
+    S.pane = 'catalog'; const kz = $('#kasir'); if (kz) { kz.dataset.pane = 'catalog'; }
+    if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); }
+    markStale(); m.close(); renderCart(); toast('Pesanan ' + r.order.order_no + ' disimpan.', 'ok');
+  });
+}
+async function viewPesanan() {
+  const O = S.ord;
+  $('#view').innerHTML = '<div class="page">' + pageHead('Pesanan', 'Pesanan pelanggan yang belum dibayar. Pilih <b>Proses &amp; bayar</b> untuk membukanya di kasir.', '<button type="button" class="btn btn-primary" data-act="nav" data-v="kasir">+ Pesanan baru</button>') +
+    '<div class="card"><div class="toolbar"><select id="of" data-chg="ordFilter" aria-label="Status pesanan">' + [['baru', 'Baru'], ['selesai', 'Selesai'], ['batal', 'Batal'], ['all', 'Semua']].map(o => '<option value="' + o[0] + '"' + (O.f === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+    '<input type="search" placeholder="Cari no. pesanan / pelanggan / telepon…" value="' + esc(O.q) + '" data-inp="ordQ" aria-label="Cari pesanan"><span class="muted" id="ocount"></span></div><div id="oTable"><div class="empty">Memuat…</div></div></div></div>';
+  try { O.list = (await api('orderList')).orders; drawPesanan(); } catch (e) { if (e.code !== 'AUTH') { viewError(e, viewPesanan); } }
+}
+function drawPesanan() {
+  const el = $('#oTable'); if (!el) { return; }
+  const O = S.ord, q = O.q.trim().toLowerCase();
+  const list = O.list.filter(o => (O.f === 'all' || o.status === O.f) && (!q || (o.order_no + ' ' + o.customer_name + ' ' + o.customer_phone).toLowerCase().includes(q)));
+  $('#ocount').textContent = list.length + ' pesanan';
+  el.innerHTML = list.length ? '<div class="tscroll"><table class="t"><thead><tr><th>No. pesanan</th><th>Pelanggan</th><th class="hide-sm">Diambil/dikirim</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>' +
+    list.map(o => { const st = ORD_ST[o.status] || [o.status, '']; return '<tr><td><b>' + esc(o.order_no) + '</b><br><small class="muted">' + esc(o.date.slice(0, 16)) + '</small></td><td>' + esc(o.customer_name) + '<br><small class="muted">' + esc(o.customer_phone || '') + '</small></td><td class="hide-sm">' + esc(o.due_date || '—') + '</td><td>' + rp(orderTotal(o)) + '</td><td><span class="badge ' + st[1] + '">' + st[0] + '</span></td>' +
+      '<td class="actions"><button type="button" class="btn btn-sm" data-act="orderView" data-id="' + o.id + '">Detail</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-sm btn-primary" data-act="orderProc" data-id="' + o.id + '">Proses &amp; bayar</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+    : '<div class="empty"><strong>' + (O.list.length ? 'Tidak ada hasil' : 'Belum ada pesanan') + '</strong>' + (O.list.length ? 'Ubah filter atau kata kunci.' : 'Isi keranjang di Kasir lalu tekan “Simpan sebagai pesanan”.') + '</div>';
+}
+Object.assign(INP, { ordQ: debounce(t => { S.ord.q = t.value; drawPesanan(); }, 120) });
+Object.assign(CHG, { ordFilter(t) { S.ord.f = t.value; drawPesanan(); } });
+Object.assign(ACT, {
+  orderView(t) {
+    const o = S.ord.list.find(x => x.id === Number(t.dataset.id)); if (!o) { return; }
+    const st = ORD_ST[o.status] || [o.status, ''];
+    const m = openModal({
+      title: 'Pesanan ' + o.order_no, size: 'wide',
+      body: '<p><span class="badge ' + st[1] + '">' + st[0] + '</span> <span class="muted">' + esc(o.date) + ' · oleh ' + esc(o.user_name) + '</span></p>' +
+        '<p style="margin:6px 0"><b>' + esc(o.customer_name) + '</b><br>' + esc([o.customer_phone, o.customer_email].filter(Boolean).join(' · ') || '') + (o.customer_addr ? '<br>' + esc(o.customer_addr) : '') + '</p>' +
+        (o.due_date ? '<p>Diambil / dikirim: <b>' + esc(o.due_date) + '</b></p>' : '') + (o.note ? '<p>Catatan: ' + esc(o.note) + '</p>' : '') +
+        '<div class="tscroll"><table class="t"><thead><tr><th>Item</th><th>Qty</th><th>Harga</th><th>Subtotal</th></tr></thead><tbody>' + o.items.map(i => '<tr><td>' + esc(i.name) + '</td><td>' + int(i.qty) + ' ' + esc(i.unit || '') + '</td><td>' + rp(i.price) + '</td><td>' + rp(i.price * i.qty) + '</td></tr>').join('') + '</tbody></table></div>' +
+        '<p style="text-align:right;margin:10px 0 0"><b>Total ' + rp(orderTotal(o)) + '</b>' + (o.invoice_no ? '<br><small class="muted">Dibayar: ' + esc(o.invoice_no) + '</small>' : '') + '</p>',
+      foot: '<button type="button" class="btn" data-close2>Tutup</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-danger" id="oCancel">Batalkan</button><button type="button" class="btn btn-primary" id="oGo">Proses &amp; bayar</button>' : '')
+    });
+    m.$('[data-close2]').onclick = () => m.close();
+    if (o.status === 'baru') {
+      m.$('#oGo').onclick = () => { m.close(); loadOrderToCart(o); };
+      m.$('#oCancel').onclick = async () => { if (await confirmBox({ title: 'Batalkan pesanan?', message: 'Pesanan ' + o.order_no + ' ditandai batal.', ok: 'Batalkan', danger: true })) { m.close(); cancelOrder(o); } };
+    }
+  },
+  orderProc(t) { const o = S.ord.list.find(x => x.id === Number(t.dataset.id)); if (o) { loadOrderToCart(o); } }
+});
+async function cancelOrder(o) {
+  await run(null, async () => { const r = await api('orderCancel', { id: o.id }); Object.assign(o, r.order); if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); } drawPesanan(); toast('Pesanan dibatalkan.', 'ok'); });
+}
+/** Buka pesanan di kasir: isi keranjang dengan item pesanan (harga & stok terbaru), lalu bayar seperti biasa. */
+async function loadOrderToCart(o) {
+  if (S.cart.length && !(await confirmBox({ title: 'Ganti isi keranjang?', message: 'Keranjang saat ini akan diganti dengan isi pesanan ' + o.order_no + '.', ok: 'Lanjutkan' }))) { return; }
+  const lines = [], missing = [];
+  o.items.forEach(i => {
+    const p = S.products.find(x => x.id === i.product_id);
+    if (!p) { missing.push(i.name); return; }
+    lines.push({ product_id: p.id, name: p.name, price: p.price, qty: i.qty, unit: p.unit, tracked: p.track_stock, max: p.track_stock ? p.stock : 999999 });
+  });
+  if (!lines.length) { toast('Produk pesanan ini sudah tidak ada.', 'err'); return; }
+  S.cart = lines; S.orderId = o.id; S.customerId = o.customer_id || 0; S.discType = o.discount_type === 'amount' ? 'amount' : 'percent'; S.discValue = o.discount_type === 'none' ? 0 : o.discount_value; S.pane = 'cart';
+  go('kasir');
+  if (missing.length) { toast('Produk tidak ditemukan dan dilewati: ' + missing.join(', '), 'err'); }
+  else { toast('Pesanan ' + o.order_no + ' dibuka di kasir.', 'ok'); }
+}
 
 /* =====================================================================
    DASHBOARD
@@ -3853,6 +4072,12 @@ function themeCardHtml() {
     '<div class="actions" style="margin-top:14px;justify-content:flex-end"><button type="button" class="btn" data-act="thReset">Kembalikan warna bawaan</button><button type="button" class="btn btn-primary" data-act="thSave">Simpan warna</button></div>' +
     '</div></div>';
 }
+/** Warna yang dipilih (draf) atau yang tersimpan, dalam bentuk yang diterima settingsSave ('' = bawaan). */
+function themeBody() {
+  const th = themeOf(S.themeDraft || ST().theme), body = {};
+  Object.keys(th).forEach(k => { body[k] = th[k] === THEME_DEFAULT[k] ? '' : th[k]; });
+  return body;
+}
 function bindTheme() {
   const card = $('#thCard'); if (!card) { return; }
   const cur = () => S.themeDraft || themeOf(ST().theme);
@@ -3875,9 +4100,7 @@ function bindTheme() {
 Object.assign(ACT, {
   thSave(t) {
     run(t, async () => {
-      const th = themeOf(S.themeDraft || ST().theme), body = {};
-      Object.keys(th).forEach(k => { body[k] = th[k] === THEME_DEFAULT[k] ? '' : th[k]; });
-      S.settings = await api('settingsSave', { theme: body }); S.themeDraft = null;
+      S.settings = await api('settingsSave', { theme: themeBody() }); S.themeDraft = null;
       applyColors(S.settings.theme, true); bindTheme(); toast('Warna tema disimpan.', 'ok');
     });
   },
@@ -3924,7 +4147,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.6';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.7';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
@@ -4135,8 +4358,10 @@ Object.assign(ACT, {
         store_name: $('#sName').value, store_address: $('#sAddr').value, store_phone: $('#sPhone').value, store_email: $('#sEmail').value, tax_no: $('#sTax').value,
         inv_code: $('#sCode').value, inv_next: moneyVal($('#sNext').value), bank_name: $('#sBank').value, bank_account: $('#sAcc').value, bank_holder: $('#sHolder').value,
         tax_rate: String($('#sTaxRate').value).replace(',', '.'), paper_width: Number($('#sPaper').value), receipt_footer: $('#sFoot').value,
-        show_logo_on_receipt: $('#sLogoRc').checked, auto_print: $('#sAuto').checked
+        show_logo_on_receipt: $('#sLogoRc').checked, auto_print: $('#sAuto').checked,
+        theme: themeBody()   // warna yang sedang dipilih ikut tersimpan (tidak hanya lewat "Simpan warna")
       });
+      S.themeDraft = null; applyColors(S.settings.theme, true);
       await warmLogo(); S.paper = S.settings.paper_width; store.set('ksr_paper', S.paper); markStale(); refreshBrand(); viewPengaturan(); toast('Pengaturan disimpan.', 'ok');
     });
   }
@@ -4261,7 +4486,7 @@ function viewSupport() {
 /* ---------- daftar layar ---------- */
 Object.assign(VIEWS, {
   kasir() { viewKasir(); if (catalogStale) { catalogStale = false; refreshCatalog(true); } },
-  support: viewSupport,
+  support: viewSupport, pesanan: viewPesanan,
   dashboard: viewDashboard, riwayat: viewRiwayat, produk: viewProduk, pelanggan: viewPelanggan,
   pengguna: viewPengguna, pengaturan: viewPengaturan
 });
