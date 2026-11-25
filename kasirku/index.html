@@ -255,7 +255,8 @@ table.t{ width:100%; border-collapse:collapse; font-size:14px; }
 .order-btn{ width:100%; margin-top:8px; min-height:44px; font-weight:700; } .order-banner{ margin:0 0 8px; padding:8px 10px; font-size:13px; border-radius:10px; background:var(--brand-soft); color:var(--brand); border:1px solid var(--brand); } .linkbtn{ background:none; border:0; color:inherit; text-decoration:underline; cursor:pointer; padding:0 0 0 6px; font:inherit; }
 .pay-btn{ width:100%; min-height:54px; font-size:18px; font-weight:800; letter-spacing:.5px; color:#fff; background:var(--pay); border:0; border-radius:10px; } .pay-btn:hover:not(:disabled){ background:var(--pay-hover); } .pay-btn:disabled{ opacity:.45; cursor:not-allowed; }
 .catalog-head{ display:flex; flex-direction:column; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); }
-.scan{ position:relative; } .scan svg{ position:absolute; left:13px; top:13px; width:22px; height:22px; opacity:.5; pointer-events:none; }
+.scan{ position:relative; } .scan-cam{ position:absolute; right:6px; top:6px; width:36px; height:36px; display:grid; place-items:center; border:0; border-radius:10px; background:var(--brand-soft); color:var(--brand); cursor:pointer; } .scan-cam svg{ position:static; width:22px; height:22px; opacity:1; } .scan kbd{ right:50px !important; } @media (max-width:900px){ .scan kbd{ display:none; } }
+#scanBox{ width:100%; min-height:260px; background:#000; border-radius:12px; overflow:hidden; } #scanBox video{ width:100% !important; } .scan-last{ margin:10px 0 0; font-weight:600; min-height:22px; } .scan-last.err{ color:var(--danger,#b42318); } .scan svg{ position:absolute; left:13px; top:13px; width:22px; height:22px; opacity:.5; pointer-events:none; }
 .scan input{ min-height:48px; padding:10px 54px 10px 44px; font-size:17px; border-width:2px; } .scan kbd{ position:absolute; right:12px; top:14px; margin:0; }
 .cat-bar{ display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:thin; } .cat-bar .chip{ flex:none; }
 .product-grid{ flex:1; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); grid-auto-rows:min-content; gap:10px; padding:12px; align-content:start; }
@@ -3247,6 +3248,7 @@ async function boot() {
 /* =====================================================================
    KASIR
    ===================================================================== */
+const ICON_CAM = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/></svg>';
 const ICON_SCAN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M7 9v6M11 9v6M15 9v6M18 9v6"/></svg>';
 async function getQris() {
   if (S.qrisImg == null) {
@@ -3287,7 +3289,7 @@ function viewKasir() {
       '</div>' +
     '</section>' +
     '<section class="catalog-panel" aria-label="Katalog produk">' +
-      '<div class="catalog-head"><div class="scan">' + ICON_SCAN + '<input id="scan" type="search" placeholder="Scan barcode atau cari produk…" autocomplete="off" aria-label="Scan barcode atau cari produk"><kbd>F2</kbd></div>' +
+      '<div class="catalog-head"><div class="scan">' + ICON_SCAN + '<input id="scan" type="search" placeholder="Scan barcode atau cari produk…" autocomplete="off" aria-label="Scan barcode atau cari produk"><kbd>F2</kbd><button type="button" class="scan-cam" data-act="scanCam" aria-label="Scan barcode dengan kamera" title="Scan dengan kamera">' + ICON_CAM + '</button></div>' +
       '<div class="cat-bar" id="catBar"></div></div>' +
       '<div class="product-grid" id="grid"></div>' +
     '</section>' +
@@ -3327,6 +3329,63 @@ function renderCatalog() {
   }).join('') : '<div class="empty" style="grid-column:1/-1"><strong>Produk tidak ditemukan</strong>' + (S.products.length ? 'Coba kata kunci lain.' : (S.user.role === 'admin' ? 'Tambahkan produk lewat menu Produk.' : 'Belum ada produk. Hubungi Kasir Admin.')) + '</div>';
 }
 
+/* ---------- scan barcode / QR dengan kamera HP (library html5-qrcode, disimpan di vendor/ agar tetap jalan offline) ---------- */
+let scanLibLoad = null;
+function loadScanLib() {
+  if (window.Html5Qrcode) { return Promise.resolve(); }
+  if (!scanLibLoad) {
+    scanLibLoad = new Promise((resolve, reject) => {
+      const el = document.createElement('script'); el.src = 'vendor/html5-qrcode.min.js';
+      el.onload = resolve; el.onerror = () => { scanLibLoad = null; reject(new Error('Pemindai belum termuat. Buka aplikasi sekali saat online, lalu coba lagi.')); };
+      document.head.appendChild(el);
+    });
+  }
+  return scanLibLoad;
+}
+function scanBeep() {
+  try { const C = window.AudioContext || window.webkitAudioContext, a = new C(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 1100; g.gain.value = .08; o.connect(g); g.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, 110); } catch (e) {}
+  try { navigator.vibrate && navigator.vibrate(40); } catch (e) {}
+}
+/** Buka kamera untuk memindai. onCode(kode) mengembalikan {ok, msg}; bila continuous=false, pemindai tertutup setelah 1 kode yang ok. */
+function openScanner(o) {
+  if (modals.length && !o.nested) { return; }
+  let scanner = null, stopped = false, last = '', lastAt = 0;
+  const stop = async () => { stopped = true; try { if (scanner && scanner.isScanning) { await scanner.stop(); } if (scanner) { scanner.clear(); } } catch (e) {} scanner = null; };
+  const m = openModal({
+    title: o.title || 'Scan barcode', size: 'wide', dismissable: true, onClose() { stop(); },
+    body: '<div id="scanBox"></div><p class="scan-last" id="scanLast">Arahkan kamera ke barcode…</p><div class="form-error" hidden></div>',
+    foot: '<button type="button" class="btn btn-primary" data-close2>' + (o.continuous ? 'Selesai' : 'Batal') + '</button>'
+  });
+  m.$('[data-close2]').onclick = () => m.close();
+  const say = (t, err) => { const el = m.$('#scanLast'); if (el) { el.textContent = t; el.className = 'scan-last' + (err ? ' err' : ''); } };
+  (async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { throw new Error('Kamera tidak bisa dipakai di sini. Buka lewat alamat https atau aplikasi PinaPos.'); }
+      await loadScanLib(); if (stopped) { return; }
+      const F = Html5QrcodeSupportedFormats;
+      scanner = new Html5Qrcode('scanBox', { verbose: false, experimentalFeatures: { useBarcodeDetector: true },
+        formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.CODE_93, F.ITF, F.CODABAR, F.QR_CODE] });
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: (w, h) => { const bw = Math.min(Math.floor(w * .9), 380); return { width: bw, height: Math.min(Math.floor(bw * .55), h) }; } }, async code => {
+        const now = Date.now(); if (stopped || (code === last && now - lastAt < 2000)) { return; } last = code; lastAt = now;
+        const r = await o.onCode(code) || { ok: true };
+        scanBeep(); say(r.msg || code, !r.ok);
+        if (r.ok && !o.continuous) { m.close(); }
+      }, () => {});
+    } catch (e) {
+      const n = e && e.name, msg = n === 'NotAllowedError' || /permission|denied/i.test(String(e)) ? 'Izin kamera ditolak. Aktifkan izin Kamera untuk aplikasi di Setelan HP, lalu coba lagi.'
+        : n === 'NotFoundError' || /no camera|not found/i.test(String(e)) ? 'Kamera tidak ditemukan di perangkat ini.' : (e && e.message) || String(e);
+      const er = m.$('.form-error'); if (er) { er.textContent = msg; er.hidden = false; } say('');
+    }
+  })();
+  return m;
+}
+/** Cari produk dari kode hasil scan lalu masukkan ke keranjang. */
+function scanToCart(code) {
+  const c = String(code).trim(), p = S.products.find(x => x.barcode && x.barcode === c) || S.products.find(x => x.sku && x.sku.toLowerCase() === c.toLowerCase());
+  if (!p) { return { ok: false, msg: 'Barcode ' + c + ' belum terdaftar di produk.' }; }
+  if (p.track_stock && p.stock <= 0) { return { ok: false, msg: 'Stok "' + p.name + '" habis.' }; }
+  addToCart(p); return { ok: true, msg: '✓ ' + p.name + ' ditambahkan (' + int((S.cart.find(l => l.product_id === p.id) || {}).qty || 1) + ')' };
+}
 function scanEnter() {
   const q = S.q.trim(); if (!q) { return; }
   const ql = q.toLowerCase();
@@ -3533,6 +3592,7 @@ Object.assign(ACT, {
   pane(t) { S.pane = t.dataset.pane; $('#kasir').dataset.pane = S.pane; window.scrollTo(0, 0); },
   pickCustomer: pickCustomer, pay: openPay,
   orderNew: orderForm,
+  scanCam() { openScanner({ title: 'Scan barcode produk', continuous: true, onCode: scanToCart }); },
   orderDetach() { S.orderId = 0; renderCart(); }
 });
 
@@ -3884,7 +3944,7 @@ function productForm(p) {
       '<label class="field"><span>Nama *</span><input id="fn" type="text" maxlength="150" value="' + esc(p.name) + '"></label>' +
       '<div class="grid2"><label class="field"><span>Kategori</span><input id="fc" type="text" list="catList" maxlength="60" value="' + esc(p.category) + '" placeholder="Pilih atau ketik baru"><datalist id="catList">' + S.prod.cats.map(c => '<option value="' + esc(c) + '">').join('') + '</datalist></label>' +
       '<label class="field"><span>Satuan</span><input id="fu" type="text" maxlength="20" value="' + esc(p.unit) + '"></label></div>' +
-      '<div class="grid2"><label class="field"><span>SKU</span><input id="fs" type="text" maxlength="50" value="' + esc(p.sku) + '"></label><label class="field"><span>Barcode</span><input id="fb" type="text" maxlength="64" value="' + esc(p.barcode) + '" inputmode="numeric"></label></div>' +
+      '<div class="grid2"><label class="field"><span>SKU</span><input id="fs" type="text" maxlength="50" value="' + esc(p.sku) + '"></label><label class="field"><span>Barcode <button type="button" class="linkbtn" id="fbScan">📷 scan dengan kamera</button></span><input id="fb" type="text" maxlength="64" value="' + esc(p.barcode) + '" inputmode="numeric"></label></div>' +
       '<div class="grid2"><label class="field"><span>Harga jual (Rp) *</span><input id="fp" class="money" type="text" inputmode="numeric" data-inp="money" value="' + (p.price ? moneyTxt(p.price) : '') + '" placeholder="0"></label><label class="field"><span>Harga modal (Rp)</span><input id="fm" class="money" type="text" inputmode="numeric" data-inp="money" value="' + (p.cost_price ? moneyTxt(p.cost_price) : '') + '" placeholder="0"><small>Dipakai untuk menghitung laba di dashboard. Tidak terlihat oleh kasir.</small></label></div>' +
       '<div id="stockRow"><div class="grid2">' + (isNew ? '<label class="field"><span>Stok awal</span><input id="fk" class="money" type="text" inputmode="numeric" data-inp="money" value="' + (p.stock ? moneyTxt(p.stock) : '') + '" placeholder="0"></label>' : '<div class="field"><span>Stok saat ini</span><b>' + int(p.stock) + ' ' + esc(p.unit) + '</b><small>Ubah lewat tombol “Stok”.</small></div>') +
       '<label class="field"><span>Stok minimum (peringatan)</span><input id="fn2" class="money" type="text" inputmode="numeric" data-inp="money" value="' + (p.min_stock ? moneyTxt(p.min_stock) : '') + '" placeholder="0"></label></div>' +
@@ -3893,6 +3953,7 @@ function productForm(p) {
   });
   const sync = v => { m.$('#stockRow').hidden = v === 'jasa'; if (v === 'jasa' && isNew) { const u = m.$('#fu'); if (u.value === 'pcs') { u.value = 'jasa'; } } if (v === 'barang' && m.$('#fu').value === 'jasa') { m.$('#fu').value = 'pcs'; } };
   bindSeg(m, 'type', sync); sync(p.type);
+  m.$('#fbScan').onclick = () => openScanner({ title: 'Scan barcode produk', nested: true, onCode: c => { m.$('#fb').value = String(c).trim(); return { ok: true, msg: String(c).trim() }; } });
   m.$('[data-close2]').onclick = () => m.close();
   const save = () => submitModal(m, m.$('#psave'), async () => {
     const type = segVal(m, 'type');
@@ -4193,7 +4254,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.8';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.9';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
