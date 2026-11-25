@@ -735,7 +735,7 @@ var SCHEMA = {
   Customers: [['id','n'],['name','s'],['phone','s'],['email','s'],['address','s'],['created_at','s']],
   Transactions: [['id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_addr','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['discount_amount','n'],['tax_rate','n'],['tax_amount','n'],['grand_total','n'],['method','s'],['amount_paid','n'],['change','n'],['status','s'],['note','s'],['client_ref','s'],['source','s']],
   TxItems: [['id','n'],['tx_id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['product_id','n'],['name','s'],['type','s'],['qty','n'],['price','n'],['cost','n'],['subtotal','n']],
-  Orders: [['id','n'],['order_no','s'],['date','s'],['due_date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_phone','s'],['customer_email','s'],['customer_addr','s'],['note','s'],['items','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['status','s'],['tx_id','n'],['invoice_no','s'],['client_ref','s']],
+  Orders: [['id','n'],['order_no','s'],['date','s'],['due_date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_phone','s'],['customer_email','s'],['customer_addr','s'],['note','s'],['items','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['status','s'],['tx_id','n'],['invoice_no','s'],['client_ref','s'],['total','n'],['dp_amount','n'],['dp_method','s']],
   StockLog: [['id','n'],['date','s'],['product_id','n'],['name','s'],['user_name','s'],['type','s'],['change','n'],['before','n'],['after','n'],['note','s']],
   Settings: [['key','s'],['value','s']],
 };
@@ -1017,6 +1017,10 @@ function createBackend_(P) {
     subtotal = round2_(subtotal);
     var taxRate = off ? off.tax_rate : settings.tax_rate;
     var tot = computeTotals(subtotal, discType, discValue, taxRate);
+    if (linkOrder) {   // catat asal pesanan & DP yang sudah diterima sebelumnya
+      var dpDone = Math.min(linkOrder.dp_amount || 0, tot.grand);
+      note = ((note ? note + ' · ' : '') + 'Pesanan ' + linkOrder.order_no + (dpDone > 0 ? ' (DP ' + dpDone + ' sudah diterima)' : '')).slice(0, 200);
+    }
     var paid = tot.grand, change = 0;
     if (method === 'cash') {
       paid = num(p.amount_paid || 0, 'Uang diterima', 0, 1e13);
@@ -1174,7 +1178,7 @@ function createBackend_(P) {
       id: o.id, order_no: o.order_no, date: o.date, due_date: o.due_date, user_name: o.user_name, customer_id: o.customer_id,
       customer_name: o.customer_name, customer_phone: o.customer_phone, customer_email: o.customer_email, customer_addr: o.customer_addr,
       note: o.note, items: items, subtotal: o.subtotal, discount_type: o.discount_type, discount_value: o.discount_value,
-      status: o.status, tx_id: o.tx_id, invoice_no: o.invoice_no
+      status: o.status, tx_id: o.tx_id, invoice_no: o.invoice_no, total: o.total, dp_amount: o.dp_amount, dp_method: o.dp_method
     };
   }
   function digits_(v) { return String(v || '').replace(/\D/g, ''); }
@@ -1233,6 +1237,13 @@ function createBackend_(P) {
     var discValue = discType === 'none' ? 0 : num(p.discount_value || 0, 'Diskon', 0, 1e12);
     if (discType === 'percent' && discValue > 100) { fail('Diskon persen tidak boleh lebih dari 100.'); }
     if (discValue === 0) { discType = 'none'; }
+    var tot = computeTotals(subtotal, discType, discValue, Number(loadSettings().tax_rate) || 0);
+    var dpAmount = round0_(num(p.dp_amount || 0, 'Uang muka (DP)', 0, 1e13)), dpMethod = '';
+    if (dpAmount > tot.grand) { fail('Uang muka (DP) tidak boleh lebih besar dari total pesanan (' + tot.grand + ').'); }
+    if (dpAmount > 0) {
+      dpMethod = String(p.dp_method || 'cash');
+      if (['cash', 'transfer', 'debit', 'credit', 'qris'].indexOf(dpMethod) < 0) { fail('Metode DP tidak valid.'); }
+    }
     var existing = null;
     if (p.id) {
       var oid = refId(p.id, 'Pesanan');
@@ -1243,7 +1254,8 @@ function createBackend_(P) {
     var customer = upsertCustomer(cust);
     var fields = {
       due_date: due, customer_id: customer.id, customer_name: customer.name, customer_phone: customer.phone || cust.phone, customer_email: customer.email || cust.email,
-      customer_addr: customer.address || cust.address, note: note, items: JSON.stringify(lines), subtotal: subtotal, discount_type: discType, discount_value: discValue
+      customer_addr: customer.address || cust.address, note: note, items: JSON.stringify(lines), subtotal: subtotal, discount_type: discType, discount_value: discValue,
+      total: tot.grand, dp_amount: dpAmount, dp_method: dpMethod
     };
     var row;
     if (existing) { row = db.update('Orders', existing.id, fields); }
@@ -3402,9 +3414,10 @@ function pickCustomer() {
 function openPay() {
   if (!S.cart.length || modals.length) { return; }
   const c = calcCart(); let method = 'cash';
+  const ordL = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null, dp = ordL ? Math.min(ordL.dp_amount || 0, c.grand) : 0, due = c.grand - dp;
   const m = openModal({
     title: 'Pembayaran', focus: '#paid',
-    body: '<div class="pay-total"><span>Total bayar</span><strong>' + rp(c.grand) + '</strong></div>' +
+    body: (dp > 0 ? '<div class="note-inv" style="margin-bottom:8px">Total pesanan ' + rp(c.grand) + ' − DP ' + rp(dp) + ' (sudah diterima)</div>' : '') + '<div class="pay-total"><span>' + (dp > 0 ? 'Sisa yang harus dibayar' : 'Total bayar') + '</span><strong>' + rp(due) + '</strong></div>' +
       '<div class="method-grid" role="group" aria-label="Metode pembayaran">' + Object.keys(PAY).map(k => '<button type="button" class="method" data-m="' + k + '" aria-pressed="' + (k === 'cash') + '">' + PAY[k] + '</button>').join('') + '</div>' +
       '<div id="cashBox"><label class="field" style="margin-bottom:0"><span>Uang diterima</span><input id="paid" class="money-input" type="text" inputmode="numeric" autocomplete="off"></label>' +
       '<div class="quick" id="quick"></div><div class="change-row" id="chg"><span>Kembalian</span><strong>Rp 0</strong></div></div><div id="qrisBox" hidden></div>' +
@@ -3414,12 +3427,12 @@ function openPay() {
   });
   const paid = m.$('#paid');
   const cashCalc = () => {
-    const v = moneyVal(paid.value), d = v - c.grand, box = m.$('#chg');
+    const v = moneyVal(paid.value), d = v - due, box = m.$('#chg');
     box.className = 'change-row' + (v && d < 0 ? ' short' : '');
     box.innerHTML = '<span>' + (v && d < 0 ? 'Kurang' : 'Kembalian') + '</span><strong>' + rp(v ? Math.abs(d) : 0) + '</strong>';
   };
-  const q = [c.grand, Math.ceil(c.grand / 10000) * 10000, Math.ceil(c.grand / 50000) * 50000, Math.ceil(c.grand / 100000) * 100000];
-  m.$('#quick').innerHTML = q.filter((v, i) => q.indexOf(v) === i).slice(0, 4).map((v, i) => '<button type="button" data-v="' + v + '">' + (v === c.grand ? 'Uang pas' : rp(v)) + '</button>').join('');
+  const q = [due, Math.ceil(due / 10000) * 10000, Math.ceil(due / 50000) * 50000, Math.ceil(due / 100000) * 100000];
+  m.$('#quick').innerHTML = q.filter((v, i) => v > 0 && q.indexOf(v) === i).slice(0, 4).map((v, i) => '<button type="button" data-v="' + v + '">' + (v === due ? 'Uang pas' : rp(v)) + '</button>').join('');
   m.$('#quick').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { paid.value = moneyTxt(b.dataset.v); cashCalc(); paid.focus(); } });
   paid.addEventListener('input', () => { paid.value = moneyTxt(paid.value); cashCalc(); });
   const invHint = () => {
@@ -3447,7 +3460,7 @@ function openPay() {
   m.$('[data-close2]').onclick = () => m.close();
   const go = async () => {
     const btn = m.$('#payGo'), err = m.$('#payErr'); err.hidden = true;
-    const amount = method === 'cash' ? moneyVal(paid.value) : c.grand;
+    const got = moneyVal(paid.value), amount = method === 'cash' ? (due <= 0 && !got ? c.grand : got + dp) : c.grand;   // DP dihitung sebagai sudah dibayar
     if (method === 'cash' && amount < c.grand) { err.textContent = 'Uang yang diterima kurang dari total belanja.'; err.hidden = false; paid.focus(); return; }
     if (btn.disabled) { return; } btn.disabled = true; btn.textContent = 'Memproses…';
     const body = {
@@ -3528,13 +3541,13 @@ Object.assign(ACT, {
    otomatis masuk ke daftar Pelanggan. Stok baru berkurang saat dibayar.
    ===================================================================== */
 const ORD_ST = { baru: ['Baru', 'warn'], selesai: ['Selesai', 'ok'], batal: ['Batal', 'danger'] };
-const orderTotal = o => { const sub = o.subtotal || 0, v = Number(o.discount_value) || 0; let d = o.discount_type === 'percent' ? Math.round(sub * Math.min(v, 100) / 100) : o.discount_type === 'amount' ? Math.round(v) : 0; d = Math.min(d, sub); return sub - d + Math.round((sub - d) * (ST().tax_rate || 0) / 100); };
+const orderTotal = o => { if (o.total > 0) { return o.total; } const sub = o.subtotal || 0, v = Number(o.discount_value) || 0; let d = o.discount_type === 'percent' ? Math.round(sub * Math.min(v, 100) / 100) : o.discount_type === 'amount' ? Math.round(v) : 0; d = Math.min(d, sub); return sub - d + Math.round((sub - d) * (ST().tax_rate || 0) / 100); };
 function orderForm() {
   if (!S.cart.length || modals.length) { return; }
   const editing = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null;
   const cu = custOf();
-  const c = editing ? { name: editing.customer_name, phone: editing.customer_phone, email: editing.customer_email, address: editing.customer_addr, due: editing.due_date, note: editing.note }
-    : { name: cu ? cu.name : '', phone: cu ? cu.phone : '', email: cu ? cu.email : '', address: cu ? cu.address : '', due: '', note: '' };
+  const c = editing ? { name: editing.customer_name, phone: editing.customer_phone, email: editing.customer_email, address: editing.customer_addr, due: editing.due_date, note: editing.note, dp: editing.dp_amount, dpm: editing.dp_method || 'cash' }
+    : { name: cu ? cu.name : '', phone: cu ? cu.phone : '', email: cu ? cu.email : '', address: cu ? cu.address : '', due: '', note: '', dp: 0, dpm: 'cash' };
   const cc = calcCart();
   const m = openModal({
     title: editing ? 'Ubah pesanan ' + editing.order_no : 'Pesanan baru', focus: '#on', size: 'wide',
@@ -3543,10 +3556,12 @@ function orderForm() {
       '<div class="grid2"><label class="field"><span>Telepon</span><input id="op" type="text" maxlength="30" inputmode="tel" value="' + esc(c.phone) + '"></label><label class="field"><span>Email</span><input id="oe" type="email" maxlength="100" value="' + esc(c.email) + '"></label></div>' +
       '<label class="field"><span>Alamat</span><textarea id="oa" maxlength="250">' + esc(c.address) + '</textarea></label>' +
       '<div class="grid2"><label class="field"><span>Tanggal diambil / dikirim</span><input id="od" type="date" value="' + esc(c.due) + '"></label><label class="field"><span>Catatan pesanan</span><input id="oc" type="text" maxlength="200" value="' + esc(c.note) + '"></label></div>' +
-      '<p class="muted" style="margin:0 0 4px;font-size:13px">Data pelanggan otomatis tersimpan ke menu Pelanggan. Stok baru berkurang saat pesanan dibayar.</p><div class="form-error" hidden></div>',
+      '<div class="grid2"><label class="field"><span>Uang muka / DP (opsional)</span><input id="odp" class="money-input" type="text" inputmode="numeric" autocomplete="off" value="' + (c.dp ? moneyTxt(c.dp) : '') + '"></label><label class="field"><span>Metode DP</span><select id="odm">' + Object.keys(PAY).map(k => '<option value="' + k + '"' + (k === c.dpm ? ' selected' : '') + '>' + PAY[k] + '</option>').join('') + '</select></label></div>' +
+      '<p class="muted" style="margin:0 0 4px;font-size:13px">Data pelanggan otomatis tersimpan ke menu Pelanggan. Stok baru berkurang saat pesanan dibayar; DP dipotong dari total saat pelunasan.</p><div class="form-error" hidden></div>',
     foot: '<button type="button" class="btn" data-close2>Batal</button><button type="button" class="btn btn-primary" id="osave">' + (editing ? 'Simpan perubahan' : 'Simpan pesanan') + '</button>'
   });
   m.$('[data-close2]').onclick = () => m.close();
+  m.$('#odp').addEventListener('input', e => { e.target.value = moneyTxt(e.target.value); });
   m.$('#on').addEventListener('change', () => {   // nama cocok dengan pelanggan terdaftar -> isi otomatis kolom yang kosong
     const hit = S.customers.find(x => x.name.toLowerCase() === m.$('#on').value.trim().toLowerCase()); if (!hit) { return; }
     if (!m.$('#op').value) { m.$('#op').value = hit.phone || ''; } if (!m.$('#oe').value) { m.$('#oe').value = hit.email || ''; } if (!m.$('#oa').value) { m.$('#oa').value = hit.address || ''; }
@@ -3556,14 +3571,44 @@ function orderForm() {
     const r = await api('orderSave', {
       ref: m.ref || (m.ref = newRef('po')), id: S.orderId || 0, customer_id: (editing && editing.customer_id) || (known ? known.id : 0) || (cu && cu.name.toLowerCase() === name.toLowerCase() ? cu.id : 0),
       customer_name: name, customer_phone: m.$('#op').value, customer_email: m.$('#oe').value, customer_addr: m.$('#oa').value, due_date: m.$('#od').value, note: m.$('#oc').value,
-      items: S.cart.map(l => ({ product_id: l.product_id, qty: l.qty })), discount_type: S.discValue > 0 ? S.discType : 'none', discount_value: S.discValue
+      items: S.cart.map(l => ({ product_id: l.product_id, qty: l.qty })), discount_type: S.discValue > 0 ? S.discType : 'none', discount_value: S.discValue,
+      dp_amount: moneyVal(m.$('#odp').value), dp_method: m.$('#odm').value
     });
     if (r.customer) { const i = S.customers.findIndex(x => x.id === r.customer.id); if (i >= 0) { S.customers[i] = r.customer; } else { S.customers.push(r.customer); } }
     S.cart = []; S.customerId = 0; S.orderId = 0; S.discValue = 0; S.discType = 'percent'; const dv = $('#dVal'); if (dv) { dv.value = ''; $('#dType').value = 'percent'; }
     S.pane = 'catalog'; const kz = $('#kasir'); if (kz) { kz.dataset.pane = 'catalog'; }
     if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); }
     markStale(); m.close(); renderCart(); toast('Pesanan ' + r.order.order_no + ' disimpan.', 'ok');
+    S.ord.list = S.ord.list.filter(x => x.id !== r.order.id); S.ord.list.unshift(r.order);
+    orderSavedBox(r.order);
   });
+}
+/** Slip pesanan (gaya struk) untuk dicetak ke printer thermal / dialog cetak. */
+function orderSlipHtml(o, width) {
+  const s = ST(), row = (l, r, cls) => '<div class="r-row' + (cls ? ' ' + cls : '') + '"><span>' + l + '</span><span>' + r + '</span></div>';
+  const items = o.items.map(i => '<div class="r-item"><div class="r-name">' + esc(i.name) + '</div>' + row(int(i.qty) + ' x ' + int(i.price), int(i.price * i.qty)) + '</div>').join('');
+  const total = orderTotal(o), dp = o.dp_amount || 0, sub = o.subtotal || 0;
+  let h = '<div class="receipt ' + (width === 58 ? 'w58' : 'w80') + '"><div class="r-center r-store">' + esc(s.store_name) + '</div>' +
+    (s.store_address ? '<div class="r-center pre">' + esc(s.store_address) + '</div>' : '') + (s.store_phone ? '<div class="r-center">Telp. ' + esc(s.store_phone) + '</div>' : '') +
+    '<hr class="r-sep"><div class="r-center r-store">SLIP PESANAN</div>' + row('No', esc(o.order_no)) + row('Tanggal', dmyhm(o.date)) + row('Kasir', esc(o.user_name)) +
+    '<hr class="r-sep">' + row('Pelanggan', esc(o.customer_name)) + (o.customer_phone ? row('Telp', esc(o.customer_phone)) : '') + (o.customer_addr ? '<div>' + esc(o.customer_addr) + '</div>' : '') +
+    (o.due_date ? row('Diambil/dikirim', esc(o.due_date)) : '') + (o.note ? '<div>Catatan: ' + esc(o.note) + '</div>' : '') +
+    '<hr class="r-sep">' + items + '<hr class="r-sep">' + row('Subtotal', int(sub));
+  const disc = o.discount_type === 'percent' ? Math.round(sub * Math.min(o.discount_value, 100) / 100) : o.discount_type === 'amount' ? Math.min(Math.round(o.discount_value), sub) : 0;
+  if (disc > 0) { h += row('Diskon' + (o.discount_type === 'percent' ? ' (' + o.discount_value + '%)' : ''), '-' + int(disc)); }
+  h += '<hr class="r-sep solid">' + row('TOTAL', int(total), 'r-total');
+  if (dp > 0) { h += row('DP (' + esc(PAY[o.dp_method] || o.dp_method) + ')', int(dp)) + row('SISA BAYAR', int(Math.max(0, total - dp)), 'r-total'); }
+  return h + '<hr class="r-sep"><div class="r-center">Pesanan belum lunas. Simpan slip ini.</div></div>';
+}
+function printOrderSlip(o) { printDoc(orderSlipHtml(o, S.paper), 'size:' + S.paper + 'mm auto;margin:0'); }
+function orderSavedBox(o) {
+  const m = openModal({
+    title: 'Pesanan tersimpan',
+    body: '<p style="margin:0 0 6px"><b>' + esc(o.order_no) + '</b> · ' + esc(o.customer_name) + '</p><p class="muted" style="margin:0">Total ' + rp(orderTotal(o)) + (o.dp_amount > 0 ? ' · DP ' + rp(o.dp_amount) + ' · sisa ' + rp(Math.max(0, orderTotal(o) - o.dp_amount)) : '') + '</p>',
+    foot: '<button type="button" class="btn" data-close2>Selesai</button><button type="button" class="btn btn-primary" id="oPrint">Cetak slip</button>'
+  });
+  m.$('[data-close2]').onclick = () => m.close();
+  m.$('#oPrint').onclick = () => printOrderSlip(o);
 }
 async function viewPesanan() {
   const O = S.ord;
@@ -3578,7 +3623,7 @@ function drawPesanan() {
   const list = O.list.filter(o => (O.f === 'all' || o.status === O.f) && (!q || (o.order_no + ' ' + o.customer_name + ' ' + o.customer_phone).toLowerCase().includes(q)));
   $('#ocount').textContent = list.length + ' pesanan';
   el.innerHTML = list.length ? '<div class="tscroll"><table class="t"><thead><tr><th>No. pesanan</th><th>Pelanggan</th><th class="hide-sm">Diambil/dikirim</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>' +
-    list.map(o => { const st = ORD_ST[o.status] || [o.status, '']; return '<tr><td><b>' + esc(o.order_no) + '</b><br><small class="muted">' + esc(o.date.slice(0, 16)) + '</small></td><td>' + esc(o.customer_name) + '<br><small class="muted">' + esc(o.customer_phone || '') + '</small></td><td class="hide-sm">' + esc(o.due_date || '—') + '</td><td>' + rp(orderTotal(o)) + '</td><td><span class="badge ' + st[1] + '">' + st[0] + '</span></td>' +
+    list.map(o => { const st = ORD_ST[o.status] || [o.status, '']; return '<tr><td><b>' + esc(o.order_no) + '</b><br><small class="muted">' + esc(o.date.slice(0, 16)) + '</small></td><td>' + esc(o.customer_name) + '<br><small class="muted">' + esc(o.customer_phone || '') + '</small></td><td class="hide-sm">' + esc(o.due_date || '—') + '</td><td>' + rp(orderTotal(o)) + (o.dp_amount > 0 && o.status === 'baru' ? '<br><small class="muted">DP ' + rp(o.dp_amount) + '</small>' : '') + '</td><td><span class="badge ' + st[1] + '">' + st[0] + '</span></td>' +
       '<td class="actions"><button type="button" class="btn btn-sm" data-act="orderView" data-id="' + o.id + '">Detail</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-sm btn-primary" data-act="orderProc" data-id="' + o.id + '">Proses &amp; bayar</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>'
     : '<div class="empty"><strong>' + (O.list.length ? 'Tidak ada hasil' : 'Belum ada pesanan') + '</strong>' + (O.list.length ? 'Ubah filter atau kata kunci.' : 'Isi keranjang di Kasir lalu tekan “Simpan sebagai pesanan”.') + '</div>';
 }
@@ -3594,10 +3639,11 @@ Object.assign(ACT, {
         '<p style="margin:6px 0"><b>' + esc(o.customer_name) + '</b><br>' + esc([o.customer_phone, o.customer_email].filter(Boolean).join(' · ') || '') + (o.customer_addr ? '<br>' + esc(o.customer_addr) : '') + '</p>' +
         (o.due_date ? '<p>Diambil / dikirim: <b>' + esc(o.due_date) + '</b></p>' : '') + (o.note ? '<p>Catatan: ' + esc(o.note) + '</p>' : '') +
         '<div class="tscroll"><table class="t"><thead><tr><th>Item</th><th>Qty</th><th>Harga</th><th>Subtotal</th></tr></thead><tbody>' + o.items.map(i => '<tr><td>' + esc(i.name) + '</td><td>' + int(i.qty) + ' ' + esc(i.unit || '') + '</td><td>' + rp(i.price) + '</td><td>' + rp(i.price * i.qty) + '</td></tr>').join('') + '</tbody></table></div>' +
-        '<p style="text-align:right;margin:10px 0 0"><b>Total ' + rp(orderTotal(o)) + '</b>' + (o.invoice_no ? '<br><small class="muted">Dibayar: ' + esc(o.invoice_no) + '</small>' : '') + '</p>',
-      foot: '<button type="button" class="btn" data-close2>Tutup</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-danger" id="oCancel">Batalkan</button><button type="button" class="btn btn-primary" id="oGo">Proses &amp; bayar</button>' : '')
+        '<p style="text-align:right;margin:10px 0 0"><b>Total ' + rp(orderTotal(o)) + '</b>' + (o.dp_amount > 0 ? '<br>DP ' + esc(PAY[o.dp_method] || '') + ': ' + rp(o.dp_amount) + '<br><b>Sisa ' + rp(Math.max(0, orderTotal(o) - o.dp_amount)) + '</b>' : '') + (o.invoice_no ? '<br><small class="muted">Dibayar: ' + esc(o.invoice_no) + '</small>' : '') + '</p>',
+      foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn" id="oPrint">Cetak slip</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-danger" id="oCancel">Batalkan</button><button type="button" class="btn btn-primary" id="oGo">Proses &amp; bayar</button>' : '')
     });
     m.$('[data-close2]').onclick = () => m.close();
+    m.$('#oPrint').onclick = () => printOrderSlip(o);
     if (o.status === 'baru') {
       m.$('#oGo').onclick = () => { m.close(); loadOrderToCart(o); };
       m.$('#oCancel').onclick = async () => { if (await confirmBox({ title: 'Batalkan pesanan?', message: 'Pesanan ' + o.order_no + ' ditandai batal.', ok: 'Batalkan', danger: true })) { m.close(); cancelOrder(o); } };
@@ -4147,7 +4193,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.7';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.8';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
