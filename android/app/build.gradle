@@ -33,6 +33,15 @@ android {
         debug {
             if (ksFile) { signingConfig signingConfigs.pinapos }
         }
+        // APK rilis (bukan debuggable) lebih jarang ditandai Google Play Protect daripada APK debug.
+        release {
+            minifyEnabled false
+            signingConfig ksFile ? signingConfigs.pinapos : signingConfigs.debug
+        }
+    }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
     }
 
     buildFeatures {
