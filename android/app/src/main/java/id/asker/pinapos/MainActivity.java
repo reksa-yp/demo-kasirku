@@ -27,6 +27,7 @@ import android.print.PrintAttributes;
 import android.print.PrintManager;
 import android.provider.MediaStore;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -57,6 +58,8 @@ public class MainActivity extends Activity {
     private static final String BASE = "https://" + HOST + "/assets/www/" + BuildConfig.APP_DIR + "/";
     private static final int FILE_REQUEST = 7;
     private static final int BT_REQUEST = 8;
+    private static final int CAM_REQUEST = 9;
+    private PermissionRequest camRequest;
     private static final UUID SPP = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
     private WebView web;
@@ -109,6 +112,23 @@ public class MainActivity extends Activity {
         });
 
         web.setWebChromeClient(new WebChromeClient() {
+            /** Kamera untuk scan barcode (getUserMedia): minta izin Android dulu, lalu izinkan halaman aplikasi sendiri. */
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    boolean video = false;
+                    for (String r : request.getResources()) { if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) { video = true; } }
+                    if (!video || !request.getOrigin().getHost().equals("appassets.androidplatform.net")) { request.deny(); return; }
+                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                        request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+                    } else {
+                        if (camRequest != null) { camRequest.deny(); }
+                        camRequest = request;
+                        requestPermissions(new String[]{Manifest.permission.CAMERA}, CAM_REQUEST);
+                    }
+                });
+            }
+
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) {
@@ -153,6 +173,11 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CAM_REQUEST && camRequest != null) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (granted) { camRequest.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE}); } else { camRequest.deny(); }
+            camRequest = null;
+        }
         if (requestCode == BT_REQUEST) {
             final boolean ok = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             web.post(() -> web.evaluateJavascript("window.ksrBtPerm && window.ksrBtPerm(" + ok + ")", null));
