@@ -1,4 +1,4 @@
 {
-  "version": "1.4.10",
-  "notes": "Ikon kamera scan rapi di Kasir dan formulir Produk."
+  "version": "1.4.11",
+  "notes": "Pesanan: rekap total per item dan simpan sebagai gambar."
 }

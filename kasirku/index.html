@@ -3671,9 +3671,123 @@ function orderSavedBox(o) {
   m.$('[data-close2]').onclick = () => m.close();
   m.$('#oPrint').onclick = () => printOrderSlip(o);
 }
+/* ---------- rekap pesanan: total per item + simpan sebagai gambar ---------- */
+const REKAP_MAX_H = 7000;   // tinggi maksimal satu gambar; selebihnya dibagi ke gambar berikutnya
+const ukuranUrut = n => n.replace(/\b(small|kecil)\b/i, '1').replace(/\b(medium|sedang)\b/i, '2').replace(/\b(large|besar|jumbo)\b/i, '3');
+const tglPanjang = d => d ? new Date(d + 'T00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+function rekapData(due) {
+  const orders = S.ord.list.filter(o => o.status === 'baru' && (!due || o.due_date === due))
+    .sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')) || a.id - b.id), by = {};
+  orders.forEach(o => o.items.forEach(i => {
+    const k = i.product_id + '|' + i.name, r = by[k] || (by[k] = { name: i.name, unit: i.unit || 'pcs', qty: 0, n: 0 });
+    r.qty += i.qty; r.n++;
+  }));
+  const items = Object.values(by).sort((a, b) => ukuranUrut(a.name).localeCompare(ukuranUrut(b.name), 'id', { numeric: true }));
+  return { due, orders, items, total: items.reduce((a, r) => a + r.qty, 0) };
+}
+/** Menggambar rekap ke satu atau beberapa canvas (lebar 1080 px). */
+function rekapCanvases(d) {
+  const W = 1080, P = 56, F = 'Roboto, "Segoe UI", Arial, sans-serif', m = document.createElement('canvas').getContext('2d');
+  const wrap = (t, max, font) => {
+    m.font = font; const out = []; let l = '';
+    String(t).split(/\s+/).forEach(w => {
+      const n = l ? l + ' ' + w : w;
+      if (m.measureText(n).width <= max) { l = n; return; }
+      if (l) { out.push(l); } l = '';
+      Array.from(w).forEach(ch => { if (l && m.measureText(l + ch).width > max) { out.push(l); l = ''; } l += ch; });
+    });
+    out.push(l); return out;
+  };
+  const txt = (g, t, x, y, font, col, al, max) => { g.font = font; g.fillStyle = col; g.textAlign = al || 'left'; g.fillText(t, x, y, max); };
+  const box = (g, x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  // setiap blok = tinggi + fungsi gambar
+  const heading = t => ({ h: 70, head: true, draw: (g, y) => txt(g, t, P, y + 42, '700 32px ' + F, '#1f6f43') });
+  const itemBlock = (r, k) => {
+    const ln = wrap(r.name, 600, '500 36px ' + F), h = 56 + ln.length * 44;
+    return { h, draw: (g, y) => {
+      const mid = y + (h - 10) / 2;
+      box(g, P, y, W - 2 * P, h - 10, k % 2 ? '#ffffff' : '#fdf6dc');
+      g.strokeStyle = '#1f6f43'; g.lineWidth = 3; g.strokeRect(P + 28, mid - 18, 36, 36);
+      ln.forEach((l, i) => txt(g, l, P + 90, mid + 13 - (ln.length - 1) * 22 + i * 44, '500 36px ' + F, '#1b2a22'));
+      txt(g, int(r.qty) + ' ' + r.unit, W - P - 28, mid + 17, '700 48px ' + F, '#173a2a', 'right', 240);
+    } };
+  };
+  const orderBlocks = o => {
+    const name = wrap(o.customer_name, 620, '700 34px ' + F);
+    const lines = [];
+    name.forEach((l, i) => lines.push({ h: 44, l, font: '700 34px ' + F, col: '#1b2a22', right: i ? '' : o.order_no, rfont: '400 26px ' + F }));
+    wrap((o.due_date ? tglPanjang(o.due_date) : 'Tanggal belum diisi') + (o.customer_phone ? ' · ' + o.customer_phone : ''), 900, '400 26px ' + F)
+      .forEach(l => lines.push({ h: 40, l, font: '400 26px ' + F, col: '#5a665e' }));
+    o.items.forEach(i => wrap(i.name, 740, '400 30px ' + F).forEach((l, k) => lines.push({ h: 42, l, font: '400 30px ' + F, col: '#1b2a22', right: k ? '' : '× ' + int(i.qty), rfont: '700 32px ' + F })));
+    if (o.note) { wrap('Catatan: ' + o.note, 880, 'italic 400 28px ' + F).forEach(l => lines.push({ h: 38, l, font: 'italic 400 28px ' + F, col: '#9a4a00' })); }
+    const out = [];
+    for (let at = 0; at < lines.length; at += 100) {   // pesanan dengan item sangat banyak dipecah
+      const part = lines.slice(at, at + 100), h = part.reduce((a, x) => a + x.h, 0) + 58;
+      out.push({ h, draw: (g, y) => {
+        box(g, P, y, W - 2 * P, h - 18, '#ffffff'); box(g, P, y, 10, h - 18, '#f2b705');
+        let yy = y + 14;
+        part.forEach(x => { yy += x.h; txt(g, x.l, P + 36, yy - 8, x.font, x.col); if (x.right) { txt(g, x.right, W - P - 28, yy - 8, x.rfont, x.col === '#1b2a22' && x.right.charAt(0) === '×' ? '#1b2a22' : '#5a665e', 'right'); } });
+      } });
+    }
+    return out;
+  };
+  const blocks = [heading('TOTAL YANG HARUS DIBUAT'), ...d.items.map(itemBlock), heading('RINCIAN PER PEMESAN'), ...[].concat(...d.orders.map(orderBlocks))];
+  const TOP = 268, BOTTOM = 80, pages = [[]];
+  let used = TOP + BOTTOM;
+  blocks.forEach((b, i) => {
+    const need = b.h + (b.head && blocks[i + 1] ? blocks[i + 1].h : 0);   // judul tidak boleh terpisah dari isinya
+    if (pages[pages.length - 1].length && used + need > REKAP_MAX_H) { pages.push([]); used = TOP + BOTTOM; }
+    pages[pages.length - 1].push(b); used += b.h;
+  });
+  return pages.map((list, n) => {
+    const c = document.createElement('canvas'); c.width = W; c.height = TOP + BOTTOM + list.reduce((a, b) => a + b.h, 0);
+    const g = c.getContext('2d');
+    box(g, 0, 0, W, c.height, '#f6f4ec'); box(g, 0, 0, W, 230, '#173a2a'); box(g, 0, 230, W, 8, '#f2b705');
+    txt(g, ST().store_name || 'PinaPos', P, 74, '500 30px ' + F, '#cfe3d7', 'left', 640);
+    txt(g, 'REKAP PESANAN', P, 136, '700 56px ' + F, '#ffffff');
+    txt(g, d.due ? 'Diambil / dikirim: ' + tglPanjang(d.due) : 'Semua tanggal ambil / kirim', P, 188, '400 30px ' + F, '#f2c94c', 'left', 660);
+    txt(g, int(d.total), W - P, 128, '700 84px ' + F, '#f2c94c', 'right', 280);
+    txt(g, 'item · ' + d.orders.length + ' pesanan', W - P, 180, '400 28px ' + F, '#cfe3d7', 'right', 280);
+    let y = TOP; list.forEach(b => { b.draw(g, y); y += b.h; });
+    txt(g, 'PinaPos · Support UMKM · Powered by ASKER' + (pages.length > 1 ? ' · gambar ' + (n + 1) + ' dari ' + pages.length : ''), W / 2, c.height - 32, '400 24px ' + F, '#5a665e', 'center');
+    return c;
+  });
+}
+function saveRekap(d) {
+  if (ANDROID && !ANDROID.saveImage) { toast('Aplikasi APK ini belum bisa menyimpan gambar. Pasang APK PinaPos versi terbaru.', 'err'); return; }
+  const now = new Date(), p2 = n => String(n).padStart(2, '0');
+  const base = 'rekap-pesanan-' + (d.due || 'semua') + '-' + p2(now.getHours()) + p2(now.getMinutes()) + p2(now.getSeconds());
+  const list = rekapCanvases(d);
+  list.forEach((c, i) => {
+    const name = base + (list.length > 1 ? '-' + (i + 1) : '') + '.png', data = c.toDataURL('image/png');
+    if (ANDROID) { ANDROID.saveImage(name, data.slice(data.indexOf(',') + 1)); return; }   // hasil lewat window.ksrImage
+    const a = document.createElement('a'); a.href = data; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  });
+  if (!ANDROID) { toast(list.length > 1 ? list.length + ' gambar rekap diunduh.' : 'Gambar rekap diunduh.', 'ok'); }
+}
+window.ksrImage = (ok, msg) => toast(ok ? 'Gambar tersimpan: ' + msg : msg, ok ? 'ok' : 'err');
+async function rekapBox() {
+  try { S.ord.list = (await api('orderList')).orders; } catch (e) { if (e.code === 'AUTH') { return; } toast(e.message, 'err'); return; }
+  const dates = [...new Set(S.ord.list.filter(o => o.status === 'baru' && o.due_date).map(o => o.due_date))].sort();
+  const m = openModal({
+    title: 'Rekap pesanan', size: 'wide', focus: '#rkd',
+    body: '<label class="field"><span>Tanggal diambil / dikirim</span><select id="rkd"><option value="">Semua tanggal</option>' + dates.map(x => '<option value="' + esc(x) + '">' + esc(tglPanjang(x)) + '</option>').join('') + '</select></label><div id="rkb"></div>',
+    foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn btn-primary" id="rks">Simpan gambar</button>'
+  });
+  const draw = () => {
+    const d = rekapData(m.$('#rkd').value);
+    m.$('#rks').disabled = !d.orders.length;
+    m.$('#rkb').innerHTML = d.orders.length ? '<div class="pay-total"><span>' + d.orders.length + ' pesanan baru</span><strong>' + int(d.total) + ' item</strong></div>' +
+      d.items.map(r => '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line)"><div><b>' + esc(r.name) + '</b><br><small class="muted">dari ' + r.n + ' pesanan</small></div><b style="font-size:20px;white-space:nowrap">' + int(r.qty) + ' ' + esc(r.unit) + '</b></div>').join('')
+      : '<div class="empty"><strong>Belum ada pesanan baru</strong>Rekap hanya menghitung pesanan berstatus Baru.</div>';
+  };
+  m.$('#rkd').onchange = draw; m.$('[data-close2]').onclick = () => m.close();
+  m.$('#rks').onclick = () => { try { saveRekap(rekapData(m.$('#rkd').value)); } catch (e) { toast('Gagal membuat gambar: ' + e.message, 'err'); } };
+  draw();
+}
 async function viewPesanan() {
   const O = S.ord;
-  $('#view').innerHTML = '<div class="page">' + pageHead('Pesanan', 'Pesanan pelanggan yang belum dibayar. Pilih <b>Proses &amp; bayar</b> untuk membukanya di kasir.', '<button type="button" class="btn btn-primary" data-act="nav" data-v="kasir">+ Pesanan baru</button>') +
+  $('#view').innerHTML = '<div class="page">' + pageHead('Pesanan', 'Pesanan pelanggan yang belum dibayar. Pilih <b>Proses &amp; bayar</b> untuk membukanya di kasir.', '<button type="button" class="btn" data-act="orderRekap">Rekap &amp; gambar</button> <button type="button" class="btn btn-primary" data-act="nav" data-v="kasir">+ Pesanan baru</button>') +
     '<div class="card"><div class="toolbar"><select id="of" data-chg="ordFilter" aria-label="Status pesanan">' + [['baru', 'Baru'], ['selesai', 'Selesai'], ['batal', 'Batal'], ['all', 'Semua']].map(o => '<option value="' + o[0] + '"' + (O.f === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
     '<input type="search" placeholder="Cari no. pesanan / pelanggan / telepon…" value="' + esc(O.q) + '" data-inp="ordQ" aria-label="Cari pesanan"><span class="muted" id="ocount"></span></div><div id="oTable"><div class="empty">Memuat…</div></div></div></div>';
   try { O.list = (await api('orderList')).orders; drawPesanan(); } catch (e) { if (e.code !== 'AUTH') { viewError(e, viewPesanan); } }
@@ -3710,6 +3824,7 @@ Object.assign(ACT, {
       m.$('#oCancel').onclick = async () => { if (await confirmBox({ title: 'Batalkan pesanan?', message: 'Pesanan ' + o.order_no + ' ditandai batal.', ok: 'Batalkan', danger: true })) { m.close(); cancelOrder(o); } };
     }
   },
+  orderRekap() { rekapBox(); },
   orderProc(t) { const o = S.ord.list.find(x => x.id === Number(t.dataset.id)); if (o) { loadOrderToCart(o); } }
 });
 async function cancelOrder(o) {
@@ -4255,7 +4370,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.10';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.11';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
