@@ -26,6 +26,7 @@ import androidx.core.content.FileProvider;
 import android.print.PrintAttributes;
 import android.print.PrintManager;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -230,6 +231,11 @@ public class MainActivity extends Activity {
         web.post(() -> web.evaluateJavascript(js, null));
     }
 
+    private void notifyImage(boolean ok, String msg) {
+        final String js = "window.ksrImage && window.ksrImage(" + ok + "," + JSONObject.quote(msg) + ")";
+        web.post(() -> web.evaluateJavascript(js, null));
+    }
+
     /** Jembatan yang dipanggil dari halaman web (window.KasirkuAndroid atau window.CuciAjaAndroid). */
     private class Bridge {
 
@@ -425,6 +431,39 @@ public class MainActivity extends Activity {
                 notifySaved(true, where);
             } catch (Exception e) {
                 notifySaved(false, "Gagal menyimpan: " + e.getMessage());
+            }
+        }
+
+        /** Simpan gambar PNG (base64) ke galeri: Pictures/<nama aplikasi>. Hasil lewat window.ksrImage. */
+        @JavascriptInterface
+        public void saveImage(final String name, final String base64) {
+            try {
+                byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+                String where;
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+                    v.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+                    v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + BuildConfig.APP_NAME);
+                    Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
+                    if (uri == null) {
+                        throw new IllegalStateException("Penyimpanan tidak tersedia");
+                    }
+                    try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                        os.write(bytes);
+                    }
+                    where = "Galeri, album " + BuildConfig.APP_NAME;
+                } else {
+                    File dir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+                    File f = new File(dir, name);
+                    try (FileOutputStream os = new FileOutputStream(f)) {
+                        os.write(bytes);
+                    }
+                    where = f.getAbsolutePath();
+                }
+                notifyImage(true, where);
+            } catch (Exception e) {
+                notifyImage(false, "Gagal menyimpan gambar: " + e.getMessage());
             }
         }
 
