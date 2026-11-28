@@ -1,4 +1,4 @@
 {
-  "version": "1.4.11",
-  "notes": "Pesanan: rekap total per item, gambar Status WhatsApp, cetak struk, dan catatan produksi."
+  "version": "1.4.12",
+  "notes": "Ubah pesanan, batalkan dan koreksi transaksi (Admin), salin daftar pesanan per pelanggan"
 }

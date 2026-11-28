@@ -210,6 +210,8 @@ table.t{ width:100%; border-collapse:collapse; font-size:14px; }
 .modal{ position:fixed; z-index:100; inset:0; display:flex; align-items:flex-start; justify-content:center; padding:5vh 12px 12px; overflow-y:auto; background:rgba(8,14,26,.55); }
 .modal-card{ width:min(520px,100%); background:var(--surface); border-radius:14px; box-shadow:var(--shadow); overflow:hidden; }
 .modal-card.wide{ width:min(860px,100%); }
+.tx-void td{ opacity:.6; } .tx-void td.num{ text-decoration:line-through; } .tx-void td.nowrap.num{ text-decoration:none; }
+.e-line{ display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); } .e-line > div{ flex:1; min-width:0; } .e-line input{ width:56px; text-align:center; padding-left:4px; padding-right:4px; }
 .rk-foot{ display:grid; grid-template-columns:1fr 1fr; gap:8px; width:100%; } .rk-foot label{ grid-column:1/-1; display:flex; align-items:center; gap:8px; } .rk-foot #rks{ grid-column:1/-1; } .modal-card.xl{ width:min(900px,100%); }
 .modal-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line); }
 .modal-head h2{ font-size:18px; } .modal-x{ width:34px; height:34px; font-size:20px; line-height:1; color:var(--muted); background:none; border:0; border-radius:8px; } .modal-x:hover{ background:var(--surface-2); }
@@ -736,7 +738,7 @@ var SCHEMA = {
   Categories: [['id','n'],['name','s']],
   Products: [['id','n'],['type','s'],['category','s'],['sku','s'],['barcode','s'],['name','s'],['unit','s'],['cost_price','n'],['price','n'],['stock','n'],['min_stock','n'],['track_stock','b'],['created_at','s']],
   Customers: [['id','n'],['name','s'],['phone','s'],['email','s'],['address','s'],['created_at','s']],
-  Transactions: [['id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_addr','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['discount_amount','n'],['tax_rate','n'],['tax_amount','n'],['grand_total','n'],['method','s'],['amount_paid','n'],['change','n'],['status','s'],['note','s'],['client_ref','s'],['source','s']],
+  Transactions: [['id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_addr','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['discount_amount','n'],['tax_rate','n'],['tax_amount','n'],['grand_total','n'],['method','s'],['amount_paid','n'],['change','n'],['status','s'],['note','s'],['client_ref','s'],['source','s'],['void_reason','s'],['void_by','s'],['void_at','s'],['replaces','s'],['replaced_by','s']],
   TxItems: [['id','n'],['tx_id','n'],['invoice_no','s'],['date','s'],['user_id','n'],['product_id','n'],['name','s'],['type','s'],['qty','n'],['price','n'],['cost','n'],['subtotal','n']],
   Orders: [['id','n'],['order_no','s'],['date','s'],['due_date','s'],['user_id','n'],['user_name','s'],['customer_id','n'],['customer_name','s'],['customer_phone','s'],['customer_email','s'],['customer_addr','s'],['note','s'],['items','s'],['subtotal','n'],['discount_type','s'],['discount_value','n'],['status','s'],['tx_id','n'],['invoice_no','s'],['client_ref','s'],['total','n'],['dp_amount','n'],['dp_method','s']],
   StockLog: [['id','n'],['date','s'],['product_id','n'],['name','s'],['user_name','s'],['type','s'],['change','n'],['before','n'],['after','n'],['note','s']],
@@ -863,6 +865,7 @@ function createBackend_(P) {
     };
   }
   function invoiceEligible(t) {
+    if (t.status === 'void') { return false; }
     return t.customer_id > 0 && (t.method === 'cash' || t.method === 'transfer') && t.status === 'completed';
   }
 
@@ -882,12 +885,13 @@ function createBackend_(P) {
       items: items.map(function (i) { return { product_id: i.product_id, name: i.name, type: i.type, qty: i.qty, price: i.price, subtotal: i.subtotal }; }),
       subtotal: t.subtotal, discount_type: t.discount_type, discount_value: t.discount_value, discount_amount: t.discount_amount,
       tax_rate: t.tax_rate, tax_amount: t.tax_amount, grand_total: t.grand_total, method: t.method,
-      amount_paid: t.amount_paid, change: t.change, status: t.status, note: t.note, invoice_eligible: invoiceEligible(t), offline: t.source === 'offline'
+      amount_paid: t.amount_paid, change: t.change, status: t.status, note: t.note, invoice_eligible: invoiceEligible(t), offline: t.source === 'offline',
+      void_reason: t.void_reason || '', void_by: t.void_by || '', void_at: t.void_at || '', replaces: t.replaces || '', replaced_by: t.replaced_by || ''
     };
   }
   function txSummary(t) {
     return { id: t.id, invoice_no: t.invoice_no, date: t.date, user_id: t.user_id, cashier: t.user_name, customer: t.customer_name,
-             method: t.method, grand_total: t.grand_total, status: t.status, invoice_eligible: invoiceEligible(t), offline: t.source === 'offline' };
+             method: t.method, grand_total: t.grand_total, status: t.status, invoice_eligible: invoiceEligible(t), offline: t.source === 'offline', replaced_by: t.replaced_by || '' };
   }
 
   /* ---------- hitung total (dipakai checkout & data contoh) ---------- */
@@ -974,10 +978,19 @@ function createBackend_(P) {
       qtyById[pid] += q;
     });
 
+    // Koreksi: transaksi lama dibatalkan dan diganti transaksi baru (tanggal, kasir, pajak, dan harga lama dipertahankan).
+    var fix = null, oldQty = {}, oldLine = {};
+    if (p.replaces) {
+      if (user.role !== 'admin') { fail('Hanya Kasir Admin yang dapat mengoreksi transaksi.', 'FORBIDDEN'); }
+      if (off) { fail('Koreksi transaksi tidak bisa dilakukan saat offline.'); }
+      fix = { tx: activeTx(p.replaces), reason: str(p.reason, 150, 'Alasan koreksi', true) };
+      db.all('TxItems').forEach(function (i) { if (i.tx_id === fix.tx.id) { oldQty[i.product_id] = (oldQty[i.product_id] || 0) + i.qty; oldLine[i.product_id] = i; } });
+    }
     var customer = null;
     if (p.customer_id) {
       var cid = refId(p.customer_id, 'Pelanggan');
       customer = db.all('Customers').filter(function (c) { return c.id === cid; })[0];
+      if (!customer && fix && cid === fix.tx.customer_id) { customer = { id: cid, name: fix.tx.customer_name, address: fix.tx.customer_addr }; }
       if (!customer && !off) { fail('Pelanggan tidak ditemukan (mungkin sudah dihapus).'); }
     }
     var discType = p.discount_type || 'none';
@@ -992,7 +1005,7 @@ function createBackend_(P) {
     if (METHODS.indexOf(method) < 0) { fail('Metode pembayaran tidak valid.'); }
     var note = str(p.note, 200, 'Catatan', false);
     var linkOrder = null;
-    if (p.order_id) {
+    if (p.order_id && !fix) {
       var oid = refId(p.order_id, 'Pesanan');
       linkOrder = db.all('Orders').filter(function (x) { return x.id === oid; })[0];
       if (!linkOrder) { fail('Pesanan tidak ditemukan.'); }
@@ -1006,24 +1019,28 @@ function createBackend_(P) {
 
     var lines = [], subtotal = 0;
     order.forEach(function (pid) {
-      var pr = byId[pid], q = qtyById[pid];
+      var pr = byId[pid], q = qtyById[pid], was = oldLine[pid];
+      if (!pr && was) { pr = { id: pid, name: was.name, type: was.type, price: was.price, cost_price: was.cost, track_stock: false, stock: 0 }; }
       if (!pr) {
         if (!off) { fail('Ada produk yang sudah dihapus. Muat ulang halaman kasir.'); }
         pr = { id: pid, name: meta[pid].name || ('Produk #' + pid), type: 'barang', price: 0, cost_price: 0, track_stock: false, stock: 0 };
       }
-      if (!off && pr.track_stock && pr.stock < q) { fail('Stok "' + pr.name + '" tidak cukup (tersisa ' + pr.stock + ', diminta ' + q + ').'); }
-      var price = off ? meta[pid].price : pr.price;
+      var avail = pr.stock + (oldQty[pid] || 0);
+      if (!off && pr.track_stock && avail < q) { fail('Stok "' + pr.name + '" tidak cukup (tersisa ' + avail + ', diminta ' + q + ').'); }
+      if (was) { pr = Object.assign({}, pr, { name: was.name, cost_price: was.cost }); }
+      var price = off ? meta[pid].price : was ? was.price : pr.price;
       var sub = round2_(price * q);
       subtotal += sub;
       lines.push({ pr: pr, qty: q, price: price, subtotal: sub });
     });
     subtotal = round2_(subtotal);
-    var taxRate = off ? off.tax_rate : settings.tax_rate;
+    var taxRate = off ? off.tax_rate : fix ? fix.tx.tax_rate : settings.tax_rate;
     var tot = computeTotals(subtotal, discType, discValue, taxRate);
     if (linkOrder) {   // catat asal pesanan & DP yang sudah diterima sebelumnya
       var dpDone = Math.min(linkOrder.dp_amount || 0, tot.grand);
       note = ((note ? note + ' · ' : '') + 'Pesanan ' + linkOrder.order_no + (dpDone > 0 ? ' (DP ' + dpDone + ' sudah diterima)' : '')).slice(0, 200);
     }
+    if (fix) { note = ('Koreksi dari ' + fix.tx.invoice_no + (note || fix.tx.note ? ' · ' + (note || fix.tx.note.replace(/^Koreksi dari \S+( · )?/, '')) : '')).slice(0, 200); }
     var paid = tot.grand, change = 0;
     if (method === 'cash') {
       paid = num(p.amount_paid || 0, 'Uang diterima', 0, 1e13);
@@ -1037,9 +1054,10 @@ function createBackend_(P) {
     var seq = (kv.inv_year === yy) ? (Number(kv.inv_next) || 1) : 1;
     var no = invoiceNo(yy, settings.inv_code, seq);
 
-    var sl = off ? off.seller : user;
+    var sl = off ? off.seller : fix ? { id: fix.tx.user_id, full_name: fix.tx.user_name } : user;
     var tx = db.insert('Transactions', {
-      invoice_no: no, date: off ? off.date : fmtDateTime_(now), user_id: sl.id, user_name: sl.full_name,
+      replaces: fix ? fix.tx.invoice_no : '',
+      invoice_no: no, date: off ? off.date : fix ? fix.tx.date : fmtDateTime_(now), user_id: sl.id, user_name: sl.full_name,
       customer_id: customer ? customer.id : 0, customer_name: customer ? customer.name : '', customer_addr: customer ? customer.address : '',
       subtotal: subtotal, discount_type: discType, discount_value: discValue, discount_amount: tot.discount,
       tax_rate: taxRate, tax_amount: tot.tax, grand_total: tot.grand,
@@ -1050,12 +1068,56 @@ function createBackend_(P) {
                qty: l.qty, price: l.price, cost: l.pr.cost_price, subtotal: l.subtotal };
     });
     var saved = db.insertMany('TxItems', itemRows);
+    if (fix) {
+      voidTx(fix.tx, user, fix.reason, no);
+      linkOrder = db.all('Orders').filter(function (x) { return x.tx_id === fix.tx.id; })[0] || null;
+    }
     lines.forEach(function (l) {
       if (l.pr.track_stock) { var cur = db.all('Products').filter(function (x) { return x.id === l.pr.id; })[0]; db.update('Products', l.pr.id, { stock: cur.stock - l.qty }); }
     });
     db.kvWrite({ inv_year: yy, inv_next: String(seq + 1) }, []);
     if (linkOrder) { db.update('Orders', linkOrder.id, { status: 'selesai', tx_id: tx.id, invoice_no: no }); }
     return txPayload(tx, saved);
+  } };
+
+  /* ----- batalkan / ubah transaksi (admin) ----- */
+  function activeTx(id) {
+    id = refId(id, 'Transaksi');
+    var t = db.all('Transactions').filter(function (x) { return x.id === id; })[0];
+    if (!t) { fail('Transaksi tidak ditemukan.'); }
+    if (t.status !== 'completed') { fail('Transaksi ' + t.invoice_no + ' sudah dibatalkan.'); }
+    return t;
+  }
+  /* Tandai batal (data tidak dihapus) dan kembalikan stok barang. */
+  function voidTx(t, user, reason, replacedBy) {
+    var stamp = fmtDateTime_(P.now()), qty = {};
+    db.all('TxItems').forEach(function (i) { if (i.tx_id === t.id) { qty[i.product_id] = (qty[i.product_id] || 0) + i.qty; } });
+    Object.keys(qty).forEach(function (k) {
+      var pr = db.all('Products').filter(function (x) { return x.id === Number(k); })[0];
+      if (!pr || !pr.track_stock) { return; }
+      db.update('Products', pr.id, { stock: pr.stock + qty[k] });
+      db.insert('StockLog', { date: stamp, product_id: pr.id, name: pr.name, user_name: user.full_name, type: 'batal', change: qty[k], before: pr.stock, after: pr.stock + qty[k], note: ((replacedBy ? 'Koreksi ' : 'Batal ') + t.invoice_no) });
+    });
+    return db.update('Transactions', t.id, { status: 'void', void_reason: reason, void_by: user.full_name, void_at: stamp, replaced_by: replacedBy || '' });
+  }
+  A.txVoid = { roles: ['admin'], write: true, run: function (p, user) {
+    var t = activeTx(p.id), reason = str(p.reason, 150, 'Alasan pembatalan', true);
+    var row = voidTx(t, user, reason, ''), order = '';
+    db.all('Orders').filter(function (x) { return x.tx_id === t.id; }).forEach(function (o) {   // pesanan asal dibuka lagi
+      db.update('Orders', o.id, { status: 'baru', tx_id: 0, invoice_no: '' }); order = o.order_no;
+    });
+    return { tx: txSummary(row), order_no: order };
+  } };
+  /* Hanya data yang tidak memengaruhi uang dan stok: pelanggan dan catatan. */
+  A.txInfo = { roles: ['admin'], write: true, run: function (p, user) {
+    var t = activeTx(p.id), patch = { note: str(p.note, 200, 'Catatan', false) }, cid = Number(p.customer_id || 0);
+    if (cid !== t.customer_id) {
+      var c = cid ? db.all('Customers').filter(function (x) { return x.id === refId(cid, 'Pelanggan'); })[0] : null;
+      if (cid && !c) { fail('Pelanggan tidak ditemukan.'); }
+      patch.customer_id = c ? c.id : 0; patch.customer_name = c ? c.name : ''; patch.customer_addr = c ? c.address : '';
+    }
+    db.update('Transactions', t.id, patch);
+    return loadTx(t.id, user);
   } };
 
   A.txList = { roles: ['admin', 'kasir'], run: function (p, user) {
@@ -1224,10 +1286,14 @@ function createBackend_(P) {
     var raw = p.items;
     if (!Array.isArray(raw) || !raw.length) { fail('Keranjang masih kosong.'); }
     if (raw.length > 200) { fail('Terlalu banyak item dalam satu pesanan (maksimal 200).'); }
-    var byId = {}, ord = [], products = {};
+    var byId = {}, ord = [], products = {}, kept = {};
     db.all('Products').forEach(function (x) { products[x.id] = x; });
+    if (p.id) {   // item yang sudah ada di pesanan tetap memakai harga saat dipesan
+      var before = db.all('Orders').filter(function (x) { return x.id === Number(p.id); })[0];
+      if (before) { try { JSON.parse(before.items).forEach(function (l) { kept[l.product_id] = l; }); } catch (e) {} }
+    }
     raw.forEach(function (it) {
-      var pid = refId(it && it.product_id, 'Produk'), q = int(it && it.qty, 'Jumlah', 1, 999999), pr = products[pid];
+      var pid = refId(it && it.product_id, 'Produk'), q = int(it && it.qty, 'Jumlah', 1, 999999), pr = kept[pid] || products[pid];
       if (!pr) { fail('Ada produk yang sudah dihapus. Muat ulang halaman kasir.'); }
       if (!byId[pid]) { byId[pid] = { product_id: pid, name: pr.name, unit: pr.unit, price: pr.price, qty: 0 }; ord.push(pid); }
       byId[pid].qty += q;
@@ -1256,8 +1322,8 @@ function createBackend_(P) {
     }
     var customer = upsertCustomer(cust);
     var fields = {
-      due_date: due, customer_id: customer.id, customer_name: customer.name, customer_phone: customer.phone || cust.phone, customer_email: customer.email || cust.email,
-      customer_addr: customer.address || cust.address, note: note, items: JSON.stringify(lines), subtotal: subtotal, discount_type: discType, discount_value: discValue,
+      due_date: due, customer_id: customer.id, customer_name: customer.name, customer_phone: existing ? cust.phone : customer.phone || cust.phone, customer_email: existing ? cust.email : customer.email || cust.email,
+      customer_addr: existing ? cust.address : customer.address || cust.address, note: note, items: JSON.stringify(lines), subtotal: subtotal, discount_type: discType, discount_value: discValue,
       total: tot.grand, dp_amount: dpAmount, dp_method: dpMethod
     };
     var row;
@@ -1406,7 +1472,8 @@ function createBackend_(P) {
     return db.all('Transactions').filter(function (t) { var d = t.date.slice(0, 10); return t.status === 'completed' && d >= r.from && d <= r.to; });
   }
   function itemsInRange(r) {
-    return db.all('TxItems').filter(function (i) { var d = i.date.slice(0, 10); return d >= r.from && d <= r.to; });
+    var ok = {}; txInRange(r).forEach(function (t) { ok[t.id] = 1; });   // item transaksi yang dibatalkan tidak dihitung
+    return db.all('TxItems').filter(function (i) { var d = i.date.slice(0, 10); return d >= r.from && d <= r.to && ok[i.tx_id]; });
   }
   function costByTx(items) {
     var m = {};
@@ -2491,6 +2558,7 @@ function receiptHtml(t, width) {
     '<div class="r-center r-store">' + esc(s.store_name) + '</div>' +
     (s.store_address ? '<div class="r-center pre">' + esc(s.store_address) + '</div>' : '') +
     (s.store_phone ? '<div class="r-center">Telp. ' + esc(s.store_phone) + '</div>' : '') +
+    (t.status === 'void' ? '<div class="r-center r-lunas">** DIBATALKAN **</div>' : '') +
     '<hr class="r-sep">' + row('No', esc(t.invoice_no)) + row('Tanggal', dmyhm(t.date)) + row('Kasir', esc(t.cashier)) +
     (t.customer ? row('Pelanggan', esc(t.customer)) : '') + '<hr class="r-sep">' + items + '<hr class="r-sep">' + row('Subtotal', int(t.subtotal));
   if (t.discount_amount > 0) { h += row('Diskon' + (t.discount_type === 'percent' ? ' (' + t.discount_value + '%)' : ''), '-' + int(t.discount_amount)); }
@@ -3102,7 +3170,7 @@ async function enter() {
     b = JSON.parse(JSON.stringify(c.b));
   }
   S.user = b.user; S.settings = b.settings; applyColors(S.settings.theme, true); await warmLogo(); S.products = applyQueueStock(b.products); S.categories = b.categories; S.customers = b.customers;
-  S.cart = []; S.customerId = 0; S.discValue = 0; S.cat = 'all'; S.q = ''; S.qrisImg = null;
+  S.cart = []; S.fix = null; S.orderId = 0; S.customerId = 0; S.discValue = 0; S.cat = 'all'; S.q = ''; S.qrisImg = null;
   Object.keys(S.sel).forEach(k => S.sel[k].clear());
   renderShell(); go(location.hash === '#kasir' || S.user.role !== 'admin' || !NET.online ? 'kasir' : 'dashboard');
   if (NET.online) { setTimeout(() => syncQueue(false), 400); }
@@ -3266,9 +3334,12 @@ function calcCart() {
   const v = Number(S.discValue) || 0;
   let disc = S.discType === 'percent' ? Math.round(sub * Math.min(v, 100) / 100) : Math.round(v);
   disc = Math.min(disc, sub);
-  const tax = Math.round((sub - disc) * (ST().tax_rate || 0) / 100);
+  const tax = Math.round((sub - disc) * cartTaxRate() / 100);
   return { sub, disc, tax, grand: sub - disc + tax };
 }
+const cartTaxRate = () => (S.fix ? S.fix.tax_rate : ST().tax_rate) || 0;
+/** Jumlah yang boleh dipakai: stok sekarang + jumlah pada transaksi yang sedang dikoreksi. */
+const stockFor = p => p.stock + ((S.fix && S.fix.qty[p.id]) || 0);
 
 function viewKasir() {
   $('#view').innerHTML =
@@ -3325,7 +3396,7 @@ function renderCatalog() {
   const list = S.products.filter(p => (S.cat === 'all' || (S.cat === '__none' ? !p.category : p.category === S.cat)) &&
     (!q || (p.name + ' ' + p.sku + ' ' + p.barcode).toLowerCase().includes(q)));
   grid.innerHTML = list.length ? list.map(p => {
-    const out = p.track_stock && p.stock <= 0, low = p.track_stock && !out && p.stock <= p.min_stock;
+    const out = p.track_stock && stockFor(p) <= 0, low = p.track_stock && !out && p.stock <= p.min_stock;
     const st = p.type === 'jasa' ? '<span class="st">Jasa</span>' : !p.track_stock ? '<span class="st">' + esc(p.unit) + '</span>' : out ? '<span class="st out">Stok habis</span>' : '<span class="st' + (low ? ' low' : '') + '">' + (low ? 'Menipis · ' : 'Stok ') + int(p.stock) + ' ' + esc(p.unit) + '</span>';
     return '<button type="button" class="pcard" style="--h:' + hueOf(p.category || p.name) + '" data-act="add" data-id="' + p.id + '"' + (out ? ' disabled' : '') + '>' + thumb(p.name, p.category || p.name) + '<span class="nm">' + esc(p.name) + '</span>' + st + '<span class="pr">' + rp(p.price) + '</span></button>';
   }).join('') : '<div class="empty" style="grid-column:1/-1"><strong>Produk tidak ditemukan</strong>' + (S.products.length ? 'Coba kata kunci lain.' : (S.user.role === 'admin' ? 'Tambahkan produk lewat menu Produk.' : 'Belum ada produk. Hubungi Kasir Admin.')) + '</div>';
@@ -3385,7 +3456,7 @@ function openScanner(o) {
 function scanToCart(code) {
   const c = String(code).trim(), p = S.products.find(x => x.barcode && x.barcode === c) || S.products.find(x => x.sku && x.sku.toLowerCase() === c.toLowerCase());
   if (!p) { return { ok: false, msg: 'Barcode ' + c + ' belum terdaftar di produk.' }; }
-  if (p.track_stock && p.stock <= 0) { return { ok: false, msg: 'Stok "' + p.name + '" habis.' }; }
+  if (p.track_stock && stockFor(p) <= 0) { return { ok: false, msg: 'Stok "' + p.name + '" habis.' }; }
   addToCart(p); return { ok: true, msg: '✓ ' + p.name + ' ditambahkan (' + int((S.cart.find(l => l.product_id === p.id) || {}).qty || 1) + ')' };
 }
 function scanEnter() {
@@ -3401,10 +3472,11 @@ function scanEnter() {
 }
 
 function addToCart(p) {
-  if (p.track_stock && p.stock <= 0) { toast('Stok "' + p.name + '" habis.', 'err'); return; }
+  if (p.track_stock && stockFor(p) <= 0) { toast('Stok "' + p.name + '" habis.', 'err'); return; }
   const l = S.cart.find(x => x.product_id === p.id);
   if (l) { setQty(S.cart.indexOf(l), l.qty + 1, false); return; }
-  S.cart.push({ product_id: p.id, name: p.name, price: p.price, qty: 1, unit: p.unit, tracked: p.track_stock, max: p.track_stock ? p.stock : 999999 });
+  const was = S.fix && S.fix.price[p.id];
+  S.cart.push({ product_id: p.id, name: p.name, price: was === undefined || was === null ? p.price : was, qty: 1, unit: p.unit, tracked: p.track_stock, max: p.track_stock ? stockFor(p) : 999999 });
   renderCart();
 }
 function setQty(i, q, fromInput) {
@@ -3437,12 +3509,14 @@ function renderTotals() {
   const c = calcCart();
   $('#sSub').textContent = rp(c.sub);
   $('#rowDisc').hidden = !c.disc; $('#sDisc').textContent = '-' + rp(c.disc);
-  $('#rowTax').hidden = !(ST().tax_rate > 0); $('#taxLbl').textContent = 'Pajak (' + (ST().tax_rate || 0) + '%)'; $('#sTax').textContent = rp(c.tax);
+  $('#rowTax').hidden = !(cartTaxRate() > 0); $('#taxLbl').textContent = 'Pajak (' + cartTaxRate() + '%)'; $('#sTax').textContent = rp(c.tax);
   $('#sTotal').textContent = rp(c.grand);
   $('#payBtn').disabled = !S.cart.length;
-  const ob = $('#ordBtn'); if (ob) { ob.disabled = !S.cart.length; ob.textContent = S.orderId ? 'Simpan perubahan pesanan' : 'Simpan sebagai pesanan'; }
+  $('#payBtn').firstChild.textContent = S.fix ? 'SIMPAN KOREKSI ' : 'BAYAR ';
+  const ob = $('#ordBtn'); if (ob) { ob.hidden = !!S.fix; ob.disabled = !S.cart.length; ob.textContent = S.orderId ? 'Simpan perubahan pesanan' : 'Simpan sebagai pesanan'; }
   const bn = $('#ordBanner');
   if (bn) { const o = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null; bn.hidden = !S.orderId; bn.innerHTML = S.orderId ? '📋 Memproses pesanan <b>' + esc(o ? o.order_no : '') + '</b> <button type="button" class="linkbtn" data-act="orderDetach">Lepas</button>' : ''; }
+  if (bn && S.fix) { bn.hidden = false; bn.innerHTML = '✏️ Mengoreksi <b>' + esc(S.fix.invoice_no) + '</b> <button type="button" class="linkbtn" data-act="fixCancel">Batalkan koreksi</button>'; }
   const pc = $('#paneCart'); if (pc) { pc.textContent = 'Keranjang' + (S.cart.length ? ' · ' + rp(c.grand) : ''); }
   const cb = $('#cartBar');
   if (cb) {
@@ -3475,16 +3549,18 @@ function pickCustomer() {
 function openPay() {
   if (!S.cart.length || modals.length) { return; }
   const c = calcCart(); let method = 'cash';
-  const ordL = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null, dp = ordL ? Math.min(ordL.dp_amount || 0, c.grand) : 0, due = c.grand - dp;
+  const fix = S.fix;
+  const ordL = S.orderId ? S.ord.list.find(x => x.id === S.orderId) : null, dp = fix ? fix.total : ordL ? Math.min(ordL.dp_amount || 0, c.grand) : 0, due = c.grand - dp;
+  if (fix) { method = fix.method; }
   const m = openModal({
-    title: 'Pembayaran', focus: '#paid',
-    body: (dp > 0 ? '<div class="note-inv" style="margin-bottom:8px">Total pesanan ' + rp(c.grand) + ' − DP ' + rp(dp) + ' (sudah diterima)</div>' : '') + '<div class="pay-total"><span>' + (dp > 0 ? 'Sisa yang harus dibayar' : 'Total bayar') + '</span><strong>' + rp(due) + '</strong></div>' +
-      '<div class="method-grid" role="group" aria-label="Metode pembayaran">' + Object.keys(PAY).map(k => '<button type="button" class="method" data-m="' + k + '" aria-pressed="' + (k === 'cash') + '">' + PAY[k] + '</button>').join('') + '</div>' +
-      '<div id="cashBox"><label class="field" style="margin-bottom:0"><span>Uang diterima</span><input id="paid" class="money-input" type="text" inputmode="numeric" autocomplete="off"></label>' +
+    title: fix ? 'Simpan koreksi ' + fix.invoice_no : 'Pembayaran', focus: fix ? '#why' : '#paid',
+    body: (fix ? '<label class="field"><span>Alasan koreksi *</span><input id="why" type="text" maxlength="150" autocomplete="off"></label><div class="note-inv" style="margin-bottom:8px">Total baru ' + rp(c.grand) + ' · sudah dibayar sebelumnya ' + rp(dp) + '</div><div class="pay-total"><span>' + (due < 0 ? 'Kembalikan ke pelanggan' : due > 0 ? 'Kurang bayar' : 'Tidak ada selisih') + '</span><strong>' + rp(Math.abs(due)) + '</strong></div>' : (dp > 0 ? '<div class="note-inv" style="margin-bottom:8px">Total pesanan ' + rp(c.grand) + ' − DP ' + rp(dp) + ' (sudah diterima)</div>' : '') + '<div class="pay-total"><span>' + (dp > 0 ? 'Sisa yang harus dibayar' : 'Total bayar') + '</span><strong>' + rp(due) + '</strong></div>') +
+      '<div class="method-grid" role="group" aria-label="Metode pembayaran">' + Object.keys(PAY).map(k => '<button type="button" class="method" data-m="' + k + '" aria-pressed="' + (k === method) + '">' + PAY[k] + '</button>').join('') + '</div>' +
+      '<div id="cashBox"' + (method !== 'cash' || (fix && due <= 0) ? ' hidden' : '') + '><label class="field" style="margin-bottom:0"><span>Uang diterima</span><input id="paid" class="money-input" type="text" inputmode="numeric" autocomplete="off"></label>' +
       '<div class="quick" id="quick"></div><div class="change-row" id="chg"><span>Kembalian</span><strong>Rp 0</strong></div></div><div id="qrisBox" hidden></div>' +
       '<label class="field" style="margin-top:14px"><span>Catatan (opsional)</span><input id="note" type="text" maxlength="200" autocomplete="off"></label>' +
       '<div id="invNote"></div><div class="form-error" id="payErr" hidden></div>',
-    foot: '<button type="button" class="btn" data-close2>Batal</button><button type="button" class="btn btn-pay" id="payGo">Proses pembayaran</button>'
+    foot: '<button type="button" class="btn" data-close2>Batal</button><button type="button" class="btn btn-pay" id="payGo">' + (fix ? 'Simpan koreksi' : 'Proses pembayaran') + '</button>'
   });
   const paid = m.$('#paid');
   const cashCalc = () => {
@@ -3503,25 +3579,26 @@ function openPay() {
     else if (!cu && (method === 'cash' || method === 'transfer')) { el.className = 'muted'; el.style.cssText = 'margin-top:10px;font-size:13px'; el.textContent = 'Butuh invoice? Tutup, lalu pilih pelanggan terdaftar di keranjang.'; }
     else { el.className = ''; el.textContent = ''; }
   };
-  const goText = () => (method === 'qris' && ST().qris_ready) ? 'Pembayaran sudah diterima' : 'Proses pembayaran';
+  const goText = () => fix ? 'Simpan koreksi' : (method === 'qris' && ST().qris_ready) ? 'Pembayaran sudah diterima' : 'Proses pembayaran';
   const showQris = async () => {
-    const box = m.$('#qrisBox'), on = method === 'qris' && ST().qris_ready;
+    const box = m.$('#qrisBox'), on = method === 'qris' && ST().qris_ready && !(fix && due <= 0);
     box.hidden = !on; m.$('#payGo').textContent = goText(); if (!on) { return; }
     box.innerHTML = '<div class="muted" style="text-align:center;padding:24px">Memuat QRIS…</div>';
     try {
       const img = await getQris(); if (method !== 'qris') { return; }
-      box.innerHTML = '<div class="qris-view"><img src="' + esc(img) + '" alt="QRIS untuk pembayaran"><p><b>Minta pelanggan scan QRIS ini</b> lalu bayar <b>' + rp(c.grand) + '</b>.</p><p class="muted">QRIS statis: nominal diketik sendiri oleh pelanggan. Tekan tombol hijau setelah dana benar-benar masuk.</p></div>';
+      box.innerHTML = '<div class="qris-view"><img src="' + esc(img) + '" alt="QRIS untuk pembayaran"><p><b>Minta pelanggan scan QRIS ini</b> lalu bayar <b>' + rp(fix ? due : c.grand) + '</b>.</p><p class="muted">QRIS statis: nominal diketik sendiri oleh pelanggan. Tekan tombol hijau setelah dana benar-benar masuk.</p></div>';
     } catch (e) { box.innerHTML = '<div class="form-error">' + esc(e.message) + '</div>'; }
   };
   m.$$('.method').forEach(b => b.addEventListener('click', () => {
     method = b.dataset.m; m.$$('.method').forEach(x => x.setAttribute('aria-pressed', x === b));
-    m.$('#cashBox').hidden = method !== 'cash'; invHint(); showQris(); if (method === 'cash') { paid.focus(); }
+    m.$('#cashBox').hidden = method !== 'cash' || !!(fix && due <= 0); invHint(); showQris(); if (method === 'cash') { paid.focus(); }
   }));
-  cashCalc(); invHint();
+  cashCalc(); invHint(); if (fix) { showQris(); }
   m.$('[data-close2]').onclick = () => m.close();
   const go = async () => {
     const btn = m.$('#payGo'), err = m.$('#payErr'); err.hidden = true;
-    const got = moneyVal(paid.value), amount = method === 'cash' ? (due <= 0 && !got ? c.grand : got + dp) : c.grand;   // DP dihitung sebagai sudah dibayar
+    const got = moneyVal(paid.value), amount = method !== 'cash' ? c.grand : fix ? (due <= 0 ? dp : got + dp) : (due <= 0 && !got ? c.grand : got + dp);   // DP / pembayaran lama dihitung sebagai sudah dibayar
+    if (fix && !m.$('#why').value.trim()) { err.textContent = 'Alasan koreksi wajib diisi.'; err.hidden = false; m.$('#why').focus(); return; }
     if (method === 'cash' && amount < c.grand) { err.textContent = 'Uang yang diterima kurang dari total belanja.'; err.hidden = false; paid.focus(); return; }
     if (btn.disabled) { return; } btn.disabled = true; btn.textContent = 'Memproses…';
     const body = {
@@ -3529,12 +3606,14 @@ function openPay() {
       items: S.cart.map(l => ({ product_id: l.product_id, qty: l.qty })), customer_id: S.customerId || 0, order_id: S.orderId || 0,
       discount_type: S.discValue > 0 ? S.discType : 'none', discount_value: S.discValue, payment_method: method, amount_paid: amount, note: m.$('#note').value
     };
+    if (fix) { body.replaces = fix.id; body.reason = m.$('#why').value.trim(); }
     try {
       let tx;
       try { tx = await api('checkout', body); }
-      catch (e) { if (e.code !== 'OFFLINE') { throw e; } tx = offlineCheckout(body, c); }
+      catch (e) { if (e.code !== 'OFFLINE' || fix) { throw e; } tx = offlineCheckout(body, c); }
       if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); }
       tx.items.forEach(i => { const p = S.products.find(x => x.id === i.product_id); if (p && p.track_stock) { p.stock = p.stock - i.qty; } });
+      if (fix) { S.products.forEach(p => { if (p.track_stock && fix.qty[p.id]) { p.stock += fix.qty[p.id]; } }); S.fix = null; markStale(); }
       S.cart = []; S.customerId = 0; S.orderId = 0; S.discValue = 0; S.discType = 'percent'; $('#dVal').value = ''; $('#dType').value = 'percent';
       S.pane = 'catalog'; const kz = $('#kasir'); if (kz) { kz.dataset.pane = 'catalog'; }
       m.close(); renderCatalog(); renderCart(); showDone(tx);
@@ -3576,8 +3655,9 @@ async function refreshCatalog(force) {
   try {
     const b = await api('bootstrap'); saveCache(b);
     S.settings = b.settings; if (!S.themeDraft) { applyColors(S.settings.theme, true); } S.products = applyQueueStock(b.products); S.categories = b.categories; S.customers = b.customers;
-    S.cart.forEach(l => { const p = S.products.find(x => x.id === l.product_id); if (p) { l.max = p.track_stock ? p.stock : 999999; l.price = p.price; l.tracked = p.track_stock; } });
-    S.cart = S.cart.filter(l => S.products.some(p => p.id === l.product_id));
+    const oldPrice = id => S.fix && S.fix.price[id] !== undefined;
+    S.cart.forEach(l => { const p = S.products.find(x => x.id === l.product_id); if (p) { l.max = p.track_stock ? stockFor(p) : 999999; if (!oldPrice(l.product_id)) { l.price = p.price; } l.tracked = p.track_stock; } });
+    S.cart = S.cart.filter(l => oldPrice(l.product_id) || S.products.some(p => p.id === l.product_id));
     if (!S.customers.some(c => c.id === S.customerId)) { S.customerId = 0; }
     if ($('#grid')) { renderCatalog(); renderCart(); }
   } catch (e) { /* diam: mungkin koneksi sesaat putus */ }
@@ -3589,7 +3669,8 @@ Object.assign(ACT, {
   inc(t) { const i = Number(t.dataset.i); setQty(i, S.cart[i].qty + 1); },
   dec(t) { const i = Number(t.dataset.i); setQty(i, S.cart[i].qty - 1); },
   rm(t) { S.cart.splice(Number(t.dataset.i), 1); renderCart(); },
-  clearCart() { if (S.cart.length) { confirmBox({ title: 'Kosongkan keranjang?', message: 'Semua item di keranjang akan dihapus.', ok: 'Kosongkan', danger: true }).then(y => { if (y) { S.cart = []; S.orderId = 0; renderCart(); } }); } },
+  clearCart() { if (S.cart.length) { confirmBox({ title: 'Kosongkan keranjang?', message: 'Semua item di keranjang akan dihapus.', ok: 'Kosongkan', danger: true }).then(y => { if (y) { if (S.fix) { endFix(); } else { S.cart = []; S.orderId = 0; renderCart(); } } }); } },
+  fixCancel() { confirmBox({ title: 'Batalkan koreksi?', message: 'Transaksi ' + S.fix.invoice_no + ' tetap berlaku seperti semula.', ok: 'Batalkan koreksi' }).then(y => { if (y) { endFix(); } }); },
   cat(t) { S.cat = t.dataset.cat; renderCatalog(); },
   pane(t) { S.pane = t.dataset.pane; $('#kasir').dataset.pane = S.pane; window.scrollTo(0, 0); },
   pickCustomer: pickCustomer, pay: openPay,
@@ -3767,13 +3848,33 @@ function produksiTeks(d) {
     'Total: ' + int(d.total) + ' item (' + d.orders.length + ' pesanan)',
     ...(notes.length ? ['', 'Catatan:', ...notes.map(o => '- ' + o.customer_name + ': ' + o.note)] : [])].join('\n');
 }
-async function copyRekap(text) {
+/** Daftar pesanan per nama pelanggan (teks siap salin). Nama dan tanggal yang sama digabung; telepon dan alamat tidak ikut. */
+function pelangganTeks(d) {
+  const by = new Map();
+  d.orders.forEach(o => {
+    const k = o.customer_name.trim().toLowerCase() + '|' + (d.due ? '' : o.due_date || '');
+    const g = by.get(k) || { name: o.customer_name.trim(), due: o.due_date, items: new Map(), notes: [], total: 0, dp: 0 };
+    o.items.forEach(i => { const key = i.product_id + '|' + i.name, r = g.items.get(key) || { name: i.name, qty: 0 }; r.qty += i.qty; g.items.set(key, r); });
+    if (o.note) { g.notes.push(o.note); }
+    g.total += orderTotal(o); g.dp += o.dp_amount || 0; by.set(k, g);
+  });
+  const out = ['*DAFTAR PESANAN*', ST().store_name || 'PinaPos', tglPanjang(d.due) || 'Semua tanggal'];
+  [...by.values()].forEach((g, n) => {
+    out.push('', (n + 1) + '. *' + g.name + '*' + (!d.due && g.due ? ' (' + tglPanjang(g.due) + ')' : ''));
+    g.items.forEach(r => out.push('   - ' + r.name + ' x' + int(r.qty)));
+    if (g.notes.length) { out.push('   Catatan: ' + g.notes.join('; ')); }
+    out.push('   Total: ' + rp(g.total) + (g.dp > 0 ? ' · DP ' + rp(g.dp) + ' · Sisa ' + rp(Math.max(0, g.total - g.dp)) : ''));
+  });
+  out.push('', by.size + ' pelanggan · ' + int(d.total) + ' item');
+  return out.join('\n');
+}
+async function copyRekap(text, done) {
   let ok = false;
   try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
     const t = document.createElement('textarea'); t.value = text; t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select();
     try { ok = document.execCommand('copy'); } catch (er) {} t.remove();
   }
-  toast(ok ? 'Catatan disalin. Tempel di aplikasi Catatan atau WhatsApp.' : 'Gagal menyalin. Pakai tombol Simpan catatan.', ok ? 'ok' : 'err');
+  toast(ok ? (done || 'Catatan disalin') + '. Tempel di aplikasi Catatan atau WhatsApp.' : 'Gagal menyalin.' + (done ? '' : ' Pakai tombol Simpan catatan.'), ok ? 'ok' : 'err');
 }
 const rekapFile = (prefix, d) => { const n = new Date(), p2 = v => String(v).padStart(2, '0'); return prefix + '-' + (d.due || 'semua') + '-' + p2(n.getHours()) + p2(n.getMinutes()) + p2(n.getSeconds()); };
 function saveCatatan(d) {
@@ -3803,7 +3904,7 @@ async function rekapBox() {
     body: '<label class="field"><span>Tanggal diambil / dikirim</span><select id="rkd"><option value="">Semua tanggal</option>' + dates.map(x => '<option value="' + esc(x) + '">' + esc(tglPanjang(x)) + '</option>').join('') + '</select></label><div id="rkb"></div>',
     foot: '<div class="rk-foot"><label><input type="checkbox" id="rkn"' + (store.get('ksr_rknames') === '1' ? ' checked' : '') + '> Tampilkan nama pemesan di gambar</label>' +
       '<button type="button" class="btn btn-primary" id="rks" data-need>Gambar Status WA</button><button type="button" class="btn" id="rkp" data-need>Cetak struk</button>' +
-      '<button type="button" class="btn" id="rkc" data-need>Salin catatan</button><button type="button" class="btn" id="rkt" data-need>Simpan catatan (.txt)</button>' +
+      '<button type="button" class="btn" id="rkc" data-need>Salin catatan</button><button type="button" class="btn" id="rkl" data-need>Salin per pelanggan</button><button type="button" class="btn" id="rkt" data-need>Simpan catatan (.txt)</button>' +
       '<button type="button" class="btn" data-close2>Tutup</button></div>'
   });
   const draw = () => {
@@ -3820,6 +3921,7 @@ async function rekapBox() {
   m.$('#rkp').onclick = () => printDoc(produksiSlipHtml(now(), S.paper), 'size:' + S.paper + 'mm auto;margin:0');
   m.$('#rkc').onclick = () => copyRekap(produksiTeks(now()));
   m.$('#rkt').onclick = () => saveCatatan(now());
+  m.$('#rkl').onclick = () => copyRekap(pelangganTeks(now()), 'Daftar per pelanggan disalin');
   draw();
 }
 async function viewPesanan() {
@@ -3836,7 +3938,7 @@ function drawPesanan() {
   $('#ocount').textContent = list.length + ' pesanan';
   el.innerHTML = list.length ? '<div class="tscroll"><table class="t"><thead><tr><th>No. pesanan</th><th>Pelanggan</th><th class="hide-sm">Diambil/dikirim</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>' +
     list.map(o => { const st = ORD_ST[o.status] || [o.status, '']; return '<tr><td><b>' + esc(o.order_no) + '</b><br><small class="muted">' + esc(o.date.slice(0, 16)) + '</small></td><td>' + esc(o.customer_name) + '<br><small class="muted">' + esc(o.customer_phone || '') + '</small></td><td class="hide-sm">' + esc(o.due_date || '—') + '</td><td>' + rp(orderTotal(o)) + (o.dp_amount > 0 && o.status === 'baru' ? '<br><small class="muted">DP ' + rp(o.dp_amount) + '</small>' : '') + '</td><td><span class="badge ' + st[1] + '">' + st[0] + '</span></td>' +
-      '<td class="actions"><button type="button" class="btn btn-sm" data-act="orderView" data-id="' + o.id + '">Detail</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-sm btn-primary" data-act="orderProc" data-id="' + o.id + '">Proses &amp; bayar</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+      '<td class="actions"><button type="button" class="btn btn-sm" data-act="orderView" data-id="' + o.id + '">Detail</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-sm" data-act="orderEdit" data-id="' + o.id + '">Ubah</button><button type="button" class="btn btn-sm btn-primary" data-act="orderProc" data-id="' + o.id + '">Proses &amp; bayar</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>'
     : '<div class="empty"><strong>' + (O.list.length ? 'Tidak ada hasil' : 'Belum ada pesanan') + '</strong>' + (O.list.length ? 'Ubah filter atau kata kunci.' : 'Isi keranjang di Kasir lalu tekan “Simpan sebagai pesanan”.') + '</div>';
 }
 Object.assign(INP, { ordQ: debounce(t => { S.ord.q = t.value; drawPesanan(); }, 120) });
@@ -3852,18 +3954,70 @@ Object.assign(ACT, {
         (o.due_date ? '<p>Diambil / dikirim: <b>' + esc(o.due_date) + '</b></p>' : '') + (o.note ? '<p>Catatan: ' + esc(o.note) + '</p>' : '') +
         '<div class="tscroll"><table class="t"><thead><tr><th>Item</th><th>Qty</th><th>Harga</th><th>Subtotal</th></tr></thead><tbody>' + o.items.map(i => '<tr><td>' + esc(i.name) + '</td><td>' + int(i.qty) + ' ' + esc(i.unit || '') + '</td><td>' + rp(i.price) + '</td><td>' + rp(i.price * i.qty) + '</td></tr>').join('') + '</tbody></table></div>' +
         '<p style="text-align:right;margin:10px 0 0"><b>Total ' + rp(orderTotal(o)) + '</b>' + (o.dp_amount > 0 ? '<br>DP ' + esc(PAY[o.dp_method] || '') + ': ' + rp(o.dp_amount) + '<br><b>Sisa ' + rp(Math.max(0, orderTotal(o) - o.dp_amount)) + '</b>' : '') + (o.invoice_no ? '<br><small class="muted">Dibayar: ' + esc(o.invoice_no) + '</small>' : '') + '</p>',
-      foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn" id="oPrint">Cetak slip</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-danger" id="oCancel">Batalkan</button><button type="button" class="btn btn-primary" id="oGo">Proses &amp; bayar</button>' : '')
+      foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn" id="oPrint">Cetak slip</button>' + (o.status === 'baru' ? '<button type="button" class="btn btn-danger" id="oCancel">Batalkan</button><button type="button" class="btn" id="oEdit">Ubah</button><button type="button" class="btn btn-primary" id="oGo">Proses &amp; bayar</button>' : '')
     });
     m.$('[data-close2]').onclick = () => m.close();
     m.$('#oPrint').onclick = () => printOrderSlip(o);
     if (o.status === 'baru') {
+      m.$('#oEdit').onclick = () => { m.close(); editOrder(o); };
       m.$('#oGo').onclick = () => { m.close(); loadOrderToCart(o); };
       m.$('#oCancel').onclick = async () => { if (await confirmBox({ title: 'Batalkan pesanan?', message: 'Pesanan ' + o.order_no + ' ditandai batal.', ok: 'Batalkan', danger: true })) { m.close(); cancelOrder(o); } };
     }
   },
   orderRekap() { rekapBox(); },
+  orderEdit(t) { const o = S.ord.list.find(x => x.id === Number(t.dataset.id)); if (o) { editOrder(o); } },
   orderProc(t) { const o = S.ord.list.find(x => x.id === Number(t.dataset.id)); if (o) { loadOrderToCart(o); } }
 });
+/** Ubah pesanan berstatus Baru langsung dari daftar pesanan. */
+async function editOrder(o) {
+  try { const b = await api('bootstrap'); S.products = applyQueueStock(b.products); S.customers = b.customers; } catch (e) { if (e.code === 'AUTH') { return; } toast(e.message, 'err'); return; }
+  const lines = o.items.map(i => Object.assign({}, i));
+  const field = (label, id, val, extra) => '<label class="field"><span>' + label + '</span><input id="' + id + '" ' + (extra || 'type="text"') + ' value="' + esc(val || '') + '"></label>';
+  const m = openModal({
+    title: 'Ubah pesanan ' + o.order_no, size: 'wide', focus: '#en',
+    body: field('Nama pelanggan / perusahaan *', 'en', o.customer_name, 'type="text" maxlength="100" autocomplete="off"') +
+      '<div class="grid2">' + field('Telepon', 'ep', o.customer_phone, 'type="text" maxlength="30" inputmode="tel"') + field('Email', 'ee', o.customer_email, 'type="email" maxlength="100"') + '</div>' +
+      field('Alamat', 'ea', o.customer_addr, 'type="text" maxlength="250"') +
+      '<div class="grid2">' + field('Tanggal diambil / dikirim', 'ed', o.due_date, 'type="date"') + field('Catatan pesanan', 'ec', o.note, 'type="text" maxlength="200"') + '</div>' +
+      '<span class="field-label">Item pesanan</span><div id="eItems"></div><label class="field" style="margin-top:10px"><span>Tambah item</span><select id="eAdd"><option value="">Pilih produk…</option>' + S.products.map(p => '<option value="' + p.id + '">' + esc(p.name) + ' · ' + rp(p.price) + '</option>').join('') + '</select></label>' +
+      '<div class="pay-total"><span>Total baru</span><strong id="eTotal"></strong></div>' +
+      '<div class="grid2"><label class="field"><span>Uang muka / DP</span><input id="edp" class="money-input" type="text" inputmode="numeric" autocomplete="off" value="' + (o.dp_amount ? moneyTxt(o.dp_amount) : '') + '"></label><label class="field"><span>Metode DP</span><select id="edm">' + Object.keys(PAY).map(k => '<option value="' + k + '"' + (k === (o.dp_method || 'cash') ? ' selected' : '') + '>' + PAY[k] + '</option>').join('') + '</select></label></div><div class="form-error" hidden></div>',
+    foot: '<button type="button" class="btn" data-close2>Batal</button><button type="button" class="btn btn-primary" id="esave">Simpan perubahan</button>'
+  });
+  const total = () => { m.$('#eTotal').textContent = rp(orderTotal({ subtotal: lines.reduce((a, l) => a + l.price * l.qty, 0), discount_type: o.discount_type, discount_value: o.discount_value, total: 0 })); };
+  const draw = () => {
+    m.$('#eItems').innerHTML = lines.length ? lines.map((l, i) => '<div class="e-line"><div><b>' + esc(l.name) + '</b><br><small class="muted">' + rp(l.price) + '</small></div><button type="button" class="btn btn-sm" data-step="-1" data-i="' + i + '" aria-label="Kurangi">−</button><input type="text" inputmode="numeric" data-i="' + i + '" value="' + l.qty + '" aria-label="Jumlah ' + esc(l.name) + '"><button type="button" class="btn btn-sm" data-step="1" data-i="' + i + '" aria-label="Tambah">+</button><button type="button" class="btn btn-sm btn-danger" data-del="' + i + '" aria-label="Hapus ' + esc(l.name) + '">×</button></div>').join('') : '<p class="muted">Belum ada item.</p>';
+    total();
+  };
+  m.$('#eItems').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) { return; }
+    if (b.dataset.del !== undefined) { lines.splice(Number(b.dataset.del), 1); } else { const l = lines[Number(b.dataset.i)]; l.qty = Math.max(1, Math.min(999999, l.qty + Number(b.dataset.step))); }
+    draw();
+  });
+  m.$('#eItems').addEventListener('input', e => { const l = lines[Number(e.target.dataset.i)], v = Math.min(999999, moneyVal(e.target.value)); if (l && v >= 1) { l.qty = v; total(); } });
+  m.$('#eItems').addEventListener('change', draw);
+  m.$('#eAdd').onchange = e => {
+    const p = S.products.find(x => x.id === Number(e.target.value)); e.target.value = ''; if (!p) { return; }
+    const l = lines.find(x => x.product_id === p.id);
+    if (l) { l.qty++; } else { lines.push({ product_id: p.id, name: p.name, unit: p.unit, price: p.price, qty: 1 }); }
+    draw();
+  };
+  m.$('#edp').addEventListener('input', e => { e.target.value = moneyTxt(e.target.value); });
+  m.$('[data-close2]').onclick = () => m.close();
+  m.$('#esave').onclick = () => submitModal(m, m.$('#esave'), async () => {
+    const name = m.$('#en').value.trim(), known = S.customers.find(x => x.name.toLowerCase() === name.toLowerCase());
+    const r = await api('orderSave', {
+      id: o.id, customer_id: name === o.customer_name && S.customers.some(x => x.id === o.customer_id) ? o.customer_id : known ? known.id : 0,
+      customer_name: name, customer_phone: m.$('#ep').value, customer_email: m.$('#ee').value, customer_addr: m.$('#ea').value, due_date: m.$('#ed').value, note: m.$('#ec').value,
+      items: lines.map(l => ({ product_id: l.product_id, qty: l.qty })), discount_type: o.discount_type, discount_value: o.discount_value,
+      dp_amount: moneyVal(m.$('#edp').value), dp_method: m.$('#edm').value
+    });
+    if (S.orderId === o.id) { S.cart = []; S.orderId = 0; S.discValue = 0; }
+    Object.assign(o, r.order); if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); }
+    markStale(); m.close(); drawPesanan(); toast('Pesanan ' + o.order_no + ' diperbarui.', 'ok');
+  });
+  draw();
+}
 async function cancelOrder(o) {
   await run(null, async () => { const r = await api('orderCancel', { id: o.id }); Object.assign(o, r.order); if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); } drawPesanan(); toast('Pesanan dibatalkan.', 'ok'); });
 }
@@ -3877,7 +4031,7 @@ async function loadOrderToCart(o) {
     lines.push({ product_id: p.id, name: p.name, price: p.price, qty: i.qty, unit: p.unit, tracked: p.track_stock, max: p.track_stock ? p.stock : 999999 });
   });
   if (!lines.length) { toast('Produk pesanan ini sudah tidak ada.', 'err'); return; }
-  S.cart = lines; S.orderId = o.id; S.customerId = o.customer_id || 0; S.discType = o.discount_type === 'amount' ? 'amount' : 'percent'; S.discValue = o.discount_type === 'none' ? 0 : o.discount_value; S.pane = 'cart';
+  S.fix = null; S.cart = lines; S.orderId = o.id; S.customerId = o.customer_id || 0; S.discType = o.discount_type === 'amount' ? 'amount' : 'percent'; S.discValue = o.discount_type === 'none' ? 0 : o.discount_value; S.pane = 'cart';
   go('kasir');
   if (missing.length) { toast('Produk tidak ditemukan dan dilewati: ' + missing.join(', '), 'err'); }
   else { toast('Pesanan ' + o.order_no + ' dibuka di kasir.', 'ok'); }
@@ -4248,11 +4402,11 @@ async function loadHist() {
 }
 function drawHist() {
   const H = S.hist, el = $('#hTable'); if (!el) { return; }
-  const admin = S.user.role === 'admin', sum = H.rows.reduce((a, r) => a + r.grand_total, 0);
+  const admin = S.user.role === 'admin', sum = H.rows.reduce((a, r) => a + (r.status === 'void' ? 0 : r.grand_total), 0), voids = H.rows.filter(r => r.status === 'void').length;
   el.innerHTML = H.rows.length ? '<div class="tscroll"><table class="t"><thead><tr><th>Waktu</th><th>No. invoice</th>' + (admin ? '<th class="hide-sm">Kasir</th>' : '') + '<th>Pelanggan</th><th class="hide-sm">Metode</th><th class="num">Total</th><th></th></tr></thead><tbody>' +
-    H.rows.map(r => '<tr><td class="nowrap">' + dmyhm(r.date) + '</td><td><b>' + esc(r.invoice_no) + '</b>' + (r.offline ? ' <span class="badge warn" title="Dibuat saat offline, sudah tersinkron">Offline</span>' : '') + '</td>' + (admin ? '<td class="hide-sm">' + esc(r.cashier) + '</td>' : '') + '<td>' + (r.customer ? esc(r.customer) : '<span class="muted">Umum</span>') + (r.invoice_eligible ? ' <span class="badge ok" title="Dapat dibuatkan invoice">Invoice</span>' : '') + '</td><td class="hide-sm">' + esc(PAY[r.method] || r.method) + '</td><td class="num">' + rp(r.grand_total) + '</td>' +
+    H.rows.map(r => '<tr' + (r.status === 'void' ? ' class="tx-void"' : '') + '><td class="nowrap">' + dmyhm(r.date) + '</td><td><b>' + esc(r.invoice_no) + '</b>' + (r.status === 'void' ? ' <span class="badge danger">' + (r.replaced_by ? 'Dikoreksi' : 'Batal') + '</span>' : '') + (r.offline ? ' <span class="badge warn" title="Dibuat saat offline, sudah tersinkron">Offline</span>' : '') + '</td>' + (admin ? '<td class="hide-sm">' + esc(r.cashier) + '</td>' : '') + '<td>' + (r.customer ? esc(r.customer) : '<span class="muted">Umum</span>') + (r.invoice_eligible ? ' <span class="badge ok" title="Dapat dibuatkan invoice">Invoice</span>' : '') + '</td><td class="hide-sm">' + esc(PAY[r.method] || r.method) + '</td><td class="num">' + rp(r.grand_total) + '</td>' +
       '<td class="nowrap num"><button type="button" class="btn btn-sm" data-act="txView" data-id="' + r.id + '">Lihat</button>' + (r.invoice_eligible ? ' <button type="button" class="btn btn-sm btn-primary" data-act="txInv" data-id="' + r.id + '">Invoice</button>' : '') + '</td></tr>').join('') +
-    '</tbody><tfoot><tr><td colspan="' + (admin ? 5 : 4) + '">' + H.total + ' transaksi' + (H.total > H.rows.length ? ' (menampilkan ' + H.rows.length + ' terbaru — persempit periode)' : '') + '</td><td class="num">' + rp(sum) + '</td><td></td></tr></tfoot></table></div>'
+    '</tbody><tfoot><tr><td colspan="' + (admin ? 5 : 4) + '">' + (H.total - voids) + ' transaksi' + (voids ? ' (+' + voids + ' batal)' : '') + (H.total > H.rows.length ? ' (menampilkan ' + H.rows.length + ' terbaru — persempit periode)' : '') + '</td><td class="num">' + rp(sum) + '</td><td></td></tr></tfoot></table></div>'
     : '<div class="empty"><strong>Tidak ada transaksi</strong>Ubah periode atau kata kunci.</div>';
 }
 async function txDetail(id) {
@@ -4262,12 +4416,67 @@ async function txDetail(id) {
     body: '<p class="muted" style="margin:0 0 10px">' + dmyhm(t.date) + ' · Kasir ' + esc(t.cashier) + ' · ' + (t.customer ? 'Pelanggan ' + esc(t.customer) : 'Pelanggan umum') + '</p>' +
       '<div class="tscroll"><table class="t"><thead><tr><th>Item</th><th class="num">Harga</th><th class="num">Jumlah</th><th class="num">Subtotal</th></tr></thead><tbody>' + t.items.map(i => '<tr><td>' + esc(i.name) + '</td><td class="num">' + rp(i.price) + '</td><td class="num">' + int(i.qty) + '</td><td class="num">' + rp(i.subtotal) + '</td></tr>').join('') + '</tbody><tfoot>' +
       '<tr><td colspan="3">Subtotal</td><td class="num">' + rp(t.subtotal) + '</td></tr>' + (t.discount_amount ? '<tr><td colspan="3">Diskon' + (t.discount_type === 'percent' ? ' (' + t.discount_value + '%)' : '') + '</td><td class="num">-' + rp(t.discount_amount) + '</td></tr>' : '') + (t.tax_amount ? '<tr><td colspan="3">Pajak (' + t.tax_rate + '%)</td><td class="num">' + rp(t.tax_amount) + '</td></tr>' : '') +
-      '<tr><td colspan="3">Total · ' + esc(PAY[t.method]) + '</td><td class="num">' + rp(t.grand_total) + '</td></tr></tfoot></table></div>' + (t.note ? '<p class="muted" style="margin:10px 0 0">Catatan: ' + esc(t.note) + '</p>' : ''),
-    foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn" id="dr">Cetak struk</button>' + (t.invoice_eligible ? '<button type="button" class="btn btn-primary" id="di">Invoice / PDF</button>' : '')
+      '<tr><td colspan="3">Total · ' + esc(PAY[t.method]) + '</td><td class="num">' + rp(t.grand_total) + '</td></tr></tfoot></table></div>' +
+      (t.status === 'void' ? '<div class="form-error" style="margin-top:10px"><b>' + (t.replaced_by ? 'Dikoreksi menjadi ' + esc(t.replaced_by) : 'Transaksi dibatalkan') + '</b><br>' + esc(t.void_reason) + ' · ' + esc(t.void_by) + ' · ' + dmyhm(t.void_at) + '</div>' : '') + (t.note ? '<p class="muted" style="margin:10px 0 0">Catatan: ' + esc(t.note) + '</p>' : ''),
+    foot: '<button type="button" class="btn" data-close2>Tutup</button><button type="button" class="btn" id="dr">Cetak struk</button>' + (t.invoice_eligible ? '<button type="button" class="btn btn-primary" id="di">Invoice / PDF</button>' : '') +
+      (S.user.role === 'admin' && t.status === 'completed' ? '<button type="button" class="btn" id="dInfo">Ubah pelanggan / catatan</button><button type="button" class="btn" id="dFix">Koreksi</button><button type="button" class="btn btn-danger" id="dVoid">Batalkan transaksi</button>' : '')
   });
   m.$('[data-close2]').onclick = () => m.close();
+  if (m.$('#dFix')) {
+    m.$('#dFix').onclick = () => { m.close(); startFix(t); };
+    m.$('#dVoid').onclick = () => { m.close(); voidBox(t); };
+    m.$('#dInfo').onclick = () => { m.close(); run(null, () => infoBox(t)); };
+  }
   m.$('#dr').onclick = () => openReceiptPreview(t);
   if (t.invoice_eligible) { m.$('#di').onclick = e => run(e.currentTarget, () => showInvoice(t.id)); }
+}
+function afterTxChange() { if (IS_LOCAL) { store.set('ksr_bkdirty', '1'); } markStale(); if (S.view === 'riwayat') { loadHist(); } }
+function voidBox(t) {
+  const m = openModal({
+    title: 'Batalkan transaksi?', focus: '#vr',
+    body: '<p style="margin:0 0 10px"><b>' + esc(t.invoice_no) + '</b> · ' + rp(t.grand_total) + '</p><p class="muted">Stok barang dikembalikan dan transaksi tidak dihitung dalam penjualan. Bila berasal dari pesanan, pesanannya dibuka lagi. Uang pelanggan dikembalikan secara manual.</p><label class="field"><span>Alasan pembatalan *</span><input id="vr" type="text" maxlength="150" autocomplete="off"></label><div class="form-error" hidden></div>',
+    foot: '<button type="button" class="btn" data-close2>Kembali</button><button type="button" class="btn btn-danger" id="vgo">Ya, batalkan</button>'
+  });
+  m.$('[data-close2]').onclick = () => m.close();
+  m.$('#vgo').onclick = () => submitModal(m, m.$('#vgo'), async () => {
+    const r = await api('txVoid', { id: t.id, reason: m.$('#vr').value });
+    if (S.fix && S.fix.id === t.id) { endFix(true); }
+    m.close(); afterTxChange(); refreshCatalog(true);
+    toast('Transaksi ' + t.invoice_no + ' dibatalkan.' + (r.order_no ? ' Pesanan ' + r.order_no + ' dibuka lagi.' : ''), 'ok');
+  });
+}
+async function infoBox(t) {
+  const customers = (await api('bootstrap')).customers;
+  const m = openModal({
+    title: 'Ubah ' + t.invoice_no,
+    body: '<label class="field"><span>Pelanggan</span><select id="ic"><option value="0">Pelanggan umum</option>' + customers.map(c => '<option value="' + c.id + '"' + (c.id === t.customer_id ? ' selected' : '') + '>' + esc(c.name) + '</option>').join('') + '</select></label><label class="field"><span>Catatan</span><input id="it" type="text" maxlength="200" value="' + esc(t.note) + '"></label><p class="muted">Untuk mengubah barang, jumlah, atau pembayaran gunakan <b>Koreksi</b>.</p><div class="form-error" hidden></div>',
+    foot: '<button type="button" class="btn" data-close2>Batal</button><button type="button" class="btn btn-primary" id="isave">Simpan</button>'
+  });
+  m.$('[data-close2]').onclick = () => m.close();
+  m.$('#isave').onclick = () => submitModal(m, m.$('#isave'), async () => {
+    await api('txInfo', { id: t.id, customer_id: Number(m.$('#ic').value), note: m.$('#it').value });
+    m.close(); afterTxChange(); toast('Perubahan disimpan.', 'ok');
+  });
+}
+/** Koreksi: barang transaksi lama dimuat ke keranjang. Transaksi lama baru batal setelah koreksi disimpan. */
+async function startFix(t) {
+  if (S.cart.length && !(await confirmBox({ title: 'Ganti isi keranjang?', message: 'Keranjang saat ini akan diganti dengan isi transaksi ' + t.invoice_no + '.', ok: 'Lanjutkan' }))) { return; }
+  try { const b = await api('bootstrap'); S.settings = b.settings; S.products = applyQueueStock(b.products); S.categories = b.categories; S.customers = b.customers; } catch (e) { if (e.code !== 'AUTH') { toast(e.message, 'err'); } return; }
+  const fix = { id: t.id, invoice_no: t.invoice_no, total: t.grand_total, tax_rate: t.tax_rate, method: t.method, qty: {}, price: {} }, lines = [];
+  t.items.forEach(i => {
+    fix.qty[i.product_id] = (fix.qty[i.product_id] || 0) + i.qty; fix.price[i.product_id] = i.price;
+    const l = lines.find(x => x.product_id === i.product_id); if (l) { l.qty += i.qty; return; }
+    lines.push({ product_id: i.product_id, name: i.name, price: i.price, qty: i.qty });
+  });
+  lines.forEach(l => { const p = S.products.find(x => x.id === l.product_id); l.unit = p ? p.unit : 'pcs'; l.tracked = !!(p && p.track_stock); l.max = l.tracked ? p.stock + fix.qty[l.product_id] : 999999; });
+  S.fix = fix; S.cart = lines; S.orderId = 0; S.customerId = S.customers.some(c => c.id === t.customer_id) ? t.customer_id : 0;
+  S.discType = t.discount_type === 'amount' ? 'amount' : 'percent'; S.discValue = t.discount_type === 'none' ? 0 : t.discount_value; S.pane = 'cart';
+  go('kasir');
+}
+function endFix(silent) {
+  S.fix = null; S.cart = []; S.orderId = 0; S.customerId = 0; S.discValue = 0; S.discType = 'percent';
+  if ($('#grid')) { $('#dVal').value = ''; $('#dType').value = 'percent'; renderCatalog(); renderCart(); }
+  if (!silent) { toast('Koreksi dibatalkan. Transaksi lama tetap berlaku.', ''); }
 }
 Object.assign(ACT, { txView(t) { run(t, () => txDetail(Number(t.dataset.id))); }, txInv(t) { run(t, () => showInvoice(Number(t.dataset.id))); } });
 Object.assign(CHG, {
@@ -4407,7 +4616,7 @@ function drawLogo() {
     '<small class="muted" style="flex-basis:100%">PNG/JPG, otomatis diperkecil. Logo tersimpan langsung saat dipilih.</small>';
 }
 /* ---------- Pembaruan aplikasi (otomatis + tombol "Periksa update") ---------- */
-const APP_BUILD = '1.4.11';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
+const APP_BUILD = '1.4.12';   // naikkan lewat tools/bump-version.sh (menyamakan version.json, sw.js, dan baris ini)
 const UPD = { checking: false, last: Number(store.get('ksr_updlast') || 0), err: '' };
 function canUpd() { return /^https?:$/.test(location.protocol); }
 function autoUpd() { return store.get('ksr_autoupd') !== '0'; }
